@@ -1,4 +1,4 @@
-Web App Template
+ROI Calculator
 
 To run the application locally, follow these steps:
 
