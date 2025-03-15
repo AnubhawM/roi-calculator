@@ -1,0 +1,13 @@
+# Environment variables
+.env
+
+# Python cache files
+__pycache__/
+*.py[cod]
+
+# Environment files
+.env
+
+# Database migrations
+alembic.ini
+alembic/versions/
