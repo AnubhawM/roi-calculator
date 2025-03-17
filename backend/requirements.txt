@@ -5,3 +5,5 @@ psycopg2-binary==2.9.10
 python-dotenv==1.0.1
 requests==2.32.3
 SQLAlchemy==2.0.37
+azure-ai-documentintelligence==1.0.1
+azure-ai-formrecognizer==3.3.3
