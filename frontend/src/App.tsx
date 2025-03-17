@@ -15,6 +15,28 @@ interface CustomField {
   value: string;
 }
 
+// Interface for extracted document data
+interface ExtractedData {
+  filename: string;
+  financial_data: Record<string, string>;
+  key_metrics: Record<string, string>;
+  dates: Record<string, string>;
+  entities: Array<{
+    category: string;
+    content: string;
+    confidence: number | null;
+  }>;
+  tables?: Array<Array<Array<string>>>;
+  error?: string;
+  raw_text?: string;
+  model_used?: string;
+}
+
+interface DocumentProcessingResult {
+  results: ExtractedData[];
+  message: string;
+}
+
 const App: React.FC = () => {
   const [budget, setBudget] = useState<string>('');
   const [employees, setEmployees] = useState<string>('');
@@ -22,6 +44,8 @@ const App: React.FC = () => {
   const [files, setFiles] = useState<File[]>([]);
   const [response, setResponse] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
+  const [documentLoading, setDocumentLoading] = useState<boolean>(false);
+  const [extractedData, setExtractedData] = useState<ExtractedData[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // State for custom fields
@@ -33,6 +57,144 @@ const App: React.FC = () => {
     if (e.target.files) {
       const fileArray = Array.from(e.target.files);
       setFiles(fileArray);
+      
+      // If files are selected, process them with Document Intelligence
+      if (fileArray.length > 0) {
+        processDocuments(fileArray);
+      }
+    }
+  };
+
+  // Process documents with Azure Document Intelligence
+  const processDocuments = async (files: File[]) => {
+    try {
+      setDocumentLoading(true);
+      
+      // Create a FormData object to send files
+      const formData = new FormData();
+      files.forEach(file => {
+        formData.append('files', file);
+      });
+      
+      // Send request to the document intelligence endpoint
+      const response = await axios.post<DocumentProcessingResult>(
+        `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/document_intelligence`,
+        formData,
+        {
+          headers: { 
+            'Content-Type': 'multipart/form-data'
+          }
+        }
+      );
+      
+      // Set the extracted data
+      setExtractedData(response.data.results);
+      
+      // Check for any errors in the results
+      const hasErrors = response.data.results.some(doc => doc.error);
+      
+      if (hasErrors) {
+        const errorCount = response.data.results.filter(doc => doc.error).length;
+        toast.warning(`Processed ${files.length} document(s), but ${errorCount} had errors. See details below.`);
+      } else {
+        toast.success(`Successfully processed ${files.length} document(s)`);
+      }
+      
+      // Automatically populate form fields if data is available
+      const validResults = response.data.results.filter(doc => !doc.error);
+      if (validResults.length > 0) {
+        populateFormFieldsFromDocuments(validResults);
+      }
+    } catch (error) {
+      console.error('Error processing documents:', error);
+      toast.error('Failed to process documents. Please try again.');
+      // Create a placeholder result with the error
+      const errorResults = files.map(file => ({
+        filename: file.name,
+        error: error instanceof Error ? error.message : 'Unknown error processing document',
+        financial_data: {},
+        key_metrics: {},
+        dates: {},
+        entities: []
+      }));
+      setExtractedData(errorResults);
+    } finally {
+      setDocumentLoading(false);
+    }
+  };
+  
+  // Populate form fields based on extracted document data
+  const populateFormFieldsFromDocuments = (results: ExtractedData[]) => {
+    if (!results || results.length === 0) return;
+    
+    // Try to extract budget from financial data
+    for (const result of results) {
+      const financialData = result.financial_data;
+      // Look for budget-related keys
+      for (const [key, value] of Object.entries(financialData)) {
+        if (key.includes('budget') && !budget) {
+          // Extract numeric value from the string
+          const numericValue = value.replace(/[^0-9.]/g, '');
+          if (numericValue) {
+            setBudget(numericValue);
+            break;
+          }
+        }
+      }
+      
+      // Look for employee-related keys in key metrics
+      const metrics = result.key_metrics;
+      for (const [key, value] of Object.entries(metrics)) {
+        if ((key.includes('employee') || key.includes('headcount')) && !employees) {
+          // Extract numeric value from the string
+          const numericValue = value.replace(/[^0-9.]/g, '');
+          if (numericValue) {
+            setEmployees(numericValue);
+            break;
+          }
+        }
+      }
+      
+      // Look for duration-related keys in dates
+      const dates = result.dates;
+      for (const [key, value] of Object.entries(dates)) {
+        if (key.includes('duration') && !duration) {
+          // Extract numeric value from the string
+          const numericValue = value.replace(/[^0-9.]/g, '');
+          if (numericValue) {
+            setDuration(numericValue);
+            break;
+          }
+        }
+      }
+      
+      // Look for other relevant custom fields
+      let newCustomFields: CustomField[] = [...customFields];
+      for (const [key, value] of Object.entries(financialData)) {
+        // Skip budget as it's already a standard field
+        if (key.includes('budget')) continue;
+        
+        // Add as custom field if it's a relevant financial metric
+        if (
+          key.includes('cost') || key.includes('rate') || 
+          key.includes('price') || key.includes('saving') ||
+          key.includes('revenue') || key.includes('benefit')
+        ) {
+          const numericValue = value.replace(/[^0-9.]/g, '');
+          if (numericValue) {
+            const newField: CustomField = {
+              id: `custom-${Date.now()}-${key}`,
+              title: key.charAt(0).toUpperCase() + key.slice(1), // Capitalize first letter
+              value: numericValue
+            };
+            newCustomFields.push(newField);
+          }
+        }
+      }
+      
+      if (newCustomFields.length > customFields.length) {
+        setCustomFields(newCustomFields);
+      }
     }
   };
 
@@ -141,7 +303,8 @@ const App: React.FC = () => {
           employees: employees,
           duration: duration,
           files: fileNames,
-          customFields: customFieldsData
+          customFields: customFieldsData,
+          documentData: extractedData.length > 0 ? extractedData : undefined
         },
         {
           headers: { 
@@ -310,6 +473,12 @@ const App: React.FC = () => {
                     </p>
                   </div>
                 )}
+                {documentLoading && (
+                  <div className="mt-2 flex items-center justify-center">
+                    <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-blue-500"></div>
+                    <span className="ml-2 text-sm text-gray-600 dark:text-gray-400">Processing documents...</span>
+                  </div>
+                )}
               </div>
               
               <button
@@ -329,6 +498,151 @@ const App: React.FC = () => {
               <h2 className="text-xl font-bold mb-4 text-blue-700 dark:text-blue-400 border-b border-gray-200 dark:border-gray-700 pb-2">ROI Analysis</h2>
               <div className="text-gray-800 dark:text-gray-200 text-base leading-relaxed font-light roi-analysis whitespace-pre-wrap">
                 {formatCurrency(prepareContent(response))}
+              </div>
+            </div>
+          )}
+          
+          {/* Extracted Document Data Section */}
+          {extractedData.length > 0 && (
+            <div className="mt-6 p-6 bg-gray-50 dark:bg-gray-800 rounded-lg shadow-sm">
+              <h2 className="text-xl font-bold mb-4 text-blue-700 dark:text-blue-400 border-b border-gray-200 dark:border-gray-700 pb-2">
+                Extracted Document Data
+              </h2>
+              <div className="space-y-4">
+                {extractedData.map((docData, index) => (
+                  <div key={index} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                    <h3 className="text-lg font-semibold mb-2 text-gray-800 dark:text-gray-200">
+                      {docData.filename}
+                    </h3>
+                    
+                    {/* Show error if there was one */}
+                    {docData.error && (
+                      <div className="mb-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md text-red-600 dark:text-red-400">
+                        <p className="font-medium">Error processing document:</p>
+                        <p className="text-sm">{docData.error}</p>
+                      </div>
+                    )}
+                    
+                    {/* Show message if no data was extracted */}
+                    {!docData.error && 
+                      Object.keys(docData.financial_data).length === 0 && 
+                      Object.keys(docData.key_metrics).length === 0 && 
+                      Object.keys(docData.dates).length === 0 && 
+                      (!docData.tables || docData.tables.length === 0) && 
+                      !docData.raw_text && (
+                        <div className="mb-3 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md text-yellow-700 dark:text-yellow-400">
+                          <p>No structured data could be extracted from this document.</p>
+                          <p className="text-sm mt-1">Try uploading a different format or a document with more clearly defined information.</p>
+                        </div>
+                    )}
+                    
+                    {/* Financial Data */}
+                    {Object.keys(docData.financial_data).length > 0 && (
+                      <div className="mb-3">
+                        <h4 className="text-md font-medium mb-1 text-blue-600 dark:text-blue-400">Financial Data</h4>
+                        <div className="bg-white dark:bg-gray-700 p-3 rounded-md">
+                          <table className="w-full text-sm">
+                            <tbody>
+                              {Object.entries(docData.financial_data).map(([key, value], idx) => (
+                                <tr key={idx} className="border-b border-gray-100 dark:border-gray-600">
+                                  <td className="py-2 font-medium text-gray-600 dark:text-gray-300 capitalize">{key}</td>
+                                  <td className="py-2 text-gray-800 dark:text-gray-100">{value}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Key Metrics */}
+                    {Object.keys(docData.key_metrics).length > 0 && (
+                      <div className="mb-3">
+                        <h4 className="text-md font-medium mb-1 text-blue-600 dark:text-blue-400">Key Metrics</h4>
+                        <div className="bg-white dark:bg-gray-700 p-3 rounded-md">
+                          <table className="w-full text-sm">
+                            <tbody>
+                              {Object.entries(docData.key_metrics).map(([key, value], idx) => (
+                                <tr key={idx} className="border-b border-gray-100 dark:border-gray-600">
+                                  <td className="py-2 font-medium text-gray-600 dark:text-gray-300 capitalize">{key}</td>
+                                  <td className="py-2 text-gray-800 dark:text-gray-100">{value}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Dates */}
+                    {Object.keys(docData.dates).length > 0 && (
+                      <div className="mb-3">
+                        <h4 className="text-md font-medium mb-1 text-blue-600 dark:text-blue-400">Timeline Information</h4>
+                        <div className="bg-white dark:bg-gray-700 p-3 rounded-md">
+                          <table className="w-full text-sm">
+                            <tbody>
+                              {Object.entries(docData.dates).map(([key, value], idx) => (
+                                <tr key={idx} className="border-b border-gray-100 dark:border-gray-600">
+                                  <td className="py-2 font-medium text-gray-600 dark:text-gray-300 capitalize">{key}</td>
+                                  <td className="py-2 text-gray-800 dark:text-gray-100">{value}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Tables - if any */}
+                    {docData.tables && docData.tables.length > 0 && (
+                      <div className="mb-3">
+                        <h4 className="text-md font-medium mb-1 text-blue-600 dark:text-blue-400">Tables</h4>
+                        <div className="space-y-4">
+                          {docData.tables.map((table, tableIdx) => (
+                            <div key={tableIdx} className="bg-white dark:bg-gray-700 p-3 rounded-md overflow-x-auto">
+                              <table className="w-full text-sm border-collapse">
+                                <tbody>
+                                  {table.map((row, rowIdx) => (
+                                    <tr key={rowIdx} className="border-b border-gray-100 dark:border-gray-600">
+                                      {row.map((cell, cellIdx) => (
+                                        <td key={cellIdx} className="py-2 px-2 border border-gray-200 dark:border-gray-600">
+                                          {cell}
+                                        </td>
+                                      ))}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Raw Text Content */}
+                    {docData.raw_text && (
+                      <div className="mb-3">
+                        <details>
+                          <summary className="text-md font-medium mb-1 text-blue-600 dark:text-blue-400 cursor-pointer">
+                            Document Content (Raw Text)
+                          </summary>
+                          <div className="bg-white dark:bg-gray-700 p-3 rounded-md mt-2">
+                            <div className="max-h-60 overflow-y-auto text-sm text-gray-800 dark:text-gray-100 whitespace-pre-wrap">
+                              {docData.raw_text}
+                            </div>
+                          </div>
+                        </details>
+                      </div>
+                    )}
+                    
+                    {/* Document Model Used */}
+                    {docData.model_used && (
+                      <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">
+                        Processed with model: {docData.model_used}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
           )}
