@@ -53,6 +53,9 @@ const App: React.FC = () => {
   const [showAddField, setShowAddField] = useState<boolean>(false);
   const [newFieldTitle, setNewFieldTitle] = useState<string>('');
 
+  // Add a state to track the newly added field
+  const [newFieldId, setNewFieldId] = useState<string | null>(null);
+
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const fileArray = Array.from(e.target.files);
@@ -264,6 +267,120 @@ const App: React.FC = () => {
     ));
   };
 
+  // Handle adding an extracted data point as a custom field
+  const addExtractedDataAsCustomField = (key: string, value: string) => {
+    // Format the value to extract just the numeric part if it has $ or %
+    let formattedValue = value;
+    
+    // Remove $ or % and commas from the value to get just the number
+    if (value.includes('$') || value.includes('%') || value.includes(',')) {
+      formattedValue = value
+        .replace(/[$,]/g, '') // Remove $ and commas
+        .replace(/%$/, '');   // Remove trailing % if present
+    }
+    
+    // Create a new unique ID for this field
+    const newId = `custom-${Date.now()}-${key}`;
+    
+    // Create a new custom field
+    const newField: CustomField = {
+      id: newId,
+      title: key.charAt(0).toUpperCase() + key.slice(1), // Capitalize first letter
+      value: formattedValue
+    };
+    
+    // Add to custom fields
+    setCustomFields([...customFields, newField]);
+    
+    // Track this field as newly added (for animation)
+    setNewFieldId(newId);
+    
+    // Clear the "new" status after animation completes
+    setTimeout(() => {
+      setNewFieldId(null);
+    }, 2000);
+    
+    // Show success message
+    toast.success(`Added "${key}" to custom fields`);
+    
+    // Scroll to custom fields section
+    const customFieldsSection = document.getElementById('custom-fields-section');
+    if (customFieldsSection) {
+      customFieldsSection.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
+  // Add a new function to handle adding table cell data as custom field
+  const addTableCellAsCustomField = (rowIndex: number, colIndex: number, table: string[][], tableIdx: number) => {
+    // Get the cell value
+    const value = table[rowIndex][colIndex];
+    
+    // Skip if the cell is empty or doesn't look like a number/metric
+    if (!value || value.trim() === '') return;
+    
+    // Try to identify row and column headers to create a meaningful field name
+    let fieldName = '';
+    
+    // First row usually contains column headers
+    const columnHeader = table[0][colIndex];
+    
+    // First column usually contains row headers
+    const rowHeader = table[rowIndex][0];
+    
+    // Only use header info if it's not empty
+    if (columnHeader && rowHeader && columnHeader !== rowHeader) {
+      // Combine row and column headers for a descriptive name
+      fieldName = `${rowHeader} ${columnHeader.toLowerCase()}`;
+    } else if (columnHeader) {
+      fieldName = columnHeader;
+    } else if (rowHeader) {
+      fieldName = rowHeader;
+    } else {
+      // Fallback - use table index and cell coordinates
+      fieldName = `Table ${tableIdx + 1} data (${rowIndex},${colIndex})`;
+    }
+    
+    // Format the value to extract just the numeric part
+    let formattedValue = value;
+    
+    // Remove $ or % and commas from the value to get just the number
+    if (value.includes('$') || value.includes('%') || value.includes(',')) {
+      formattedValue = value
+        .replace(/[$,]/g, '') // Remove $ and commas
+        .replace(/%$/, '');   // Remove trailing % if present
+    }
+    
+    // Create a new unique ID for this field
+    const newId = `custom-${Date.now()}-table-${tableIdx}-${rowIndex}-${colIndex}`;
+    
+    // Create a new custom field
+    const newField: CustomField = {
+      id: newId,
+      title: fieldName.charAt(0).toUpperCase() + fieldName.slice(1), // Capitalize first letter
+      value: formattedValue
+    };
+    
+    // Add to custom fields
+    setCustomFields([...customFields, newField]);
+    
+    // Track this field as newly added (for animation)
+    setNewFieldId(newId);
+    
+    // Clear the "new" status after animation completes
+    setTimeout(() => {
+      setNewFieldId(null);
+    }, 2000);
+    
+    // Show success message
+    toast.success(`Added "${fieldName}" to custom fields`);
+    
+    // Scroll to custom fields section
+    const customFieldsSection = document.getElementById('custom-fields-section');
+    if (customFieldsSection) {
+      customFieldsSection.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
   const calculateROI = async () => {
     // Validate inputs
     if (!budget.trim() || !employees.trim() || !duration.trim()) {
@@ -378,7 +495,7 @@ const App: React.FC = () => {
               </div>
 
               {/* Custom Fields Section */}
-              <div className="mt-4 space-y-4">
+              <div id="custom-fields-section" className="mt-4 space-y-4">
                 <div className="flex justify-between items-center">
                   <h3 className="font-medium text-gray-900 dark:text-gray-100">Custom Fields</h3>
                   <button
@@ -399,7 +516,10 @@ const App: React.FC = () => {
                 </p>
                 
                 {customFields.map((field) => (
-                  <div key={field.id} className="relative flex space-x-2">
+                  <div 
+                    key={field.id} 
+                    className={`relative flex space-x-2 ${newFieldId === field.id ? 'custom-field-new rounded-lg' : ''}`}
+                  >
                     <div className="flex-1">
                       <input
                         type="text"
@@ -506,7 +626,7 @@ const App: React.FC = () => {
           {extractedData.length > 0 && (
             <div className="mt-6 p-6 bg-gray-50 dark:bg-gray-800 rounded-lg shadow-sm">
               <h2 className="text-xl font-bold mb-4 text-blue-700 dark:text-blue-400 border-b border-gray-200 dark:border-gray-700 pb-2">
-                Extracted Document Data
+                Extracted Document Data <span className="text-sm font-normal text-gray-600 dark:text-gray-400">(Click the green + button next to any data point to add it as a custom field)</span>
               </h2>
               <div className="space-y-4">
                 {extractedData.map((docData, index) => (
@@ -551,6 +671,17 @@ const App: React.FC = () => {
                                     <tr key={idx} className="border-b border-gray-100 dark:border-gray-600">
                                       <td className="py-2 font-medium text-gray-600 dark:text-gray-300 capitalize">{key}</td>
                                       <td className="py-2 text-gray-800 dark:text-gray-100">{value}</td>
+                                      <td className="py-2 w-10 text-right">
+                                        <button 
+                                          onClick={() => addExtractedDataAsCustomField(key, value)}
+                                          className="text-green-500 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300"
+                                          title={`Add "${key}" to custom fields`}
+                                        >
+                                          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                            <path fillRule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clipRule="evenodd" />
+                                          </svg>
+                                        </button>
+                                      </td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -574,6 +705,17 @@ const App: React.FC = () => {
                                     <tr key={idx} className="border-b border-gray-100 dark:border-gray-600">
                                       <td className="py-2 font-medium text-gray-600 dark:text-gray-300 capitalize">{key}</td>
                                       <td className="py-2 text-gray-800 dark:text-gray-100">{value}</td>
+                                      <td className="py-2 w-10 text-right">
+                                        <button 
+                                          onClick={() => addExtractedDataAsCustomField(key, value)}
+                                          className="text-green-500 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300"
+                                          title={`Add "${key}" to custom fields`}
+                                        >
+                                          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                            <path fillRule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clipRule="evenodd" />
+                                          </svg>
+                                        </button>
+                                      </td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -597,6 +739,17 @@ const App: React.FC = () => {
                                     <tr key={idx} className="border-b border-gray-100 dark:border-gray-600">
                                       <td className="py-2 font-medium text-gray-600 dark:text-gray-300 capitalize">{key}</td>
                                       <td className="py-2 text-gray-800 dark:text-gray-100">{value}</td>
+                                      <td className="py-2 w-10 text-right">
+                                        <button 
+                                          onClick={() => addExtractedDataAsCustomField(key, value)}
+                                          className="text-green-500 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300"
+                                          title={`Add "${key}" to custom fields`}
+                                        >
+                                          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                            <path fillRule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clipRule="evenodd" />
+                                          </svg>
+                                        </button>
+                                      </td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -620,11 +773,29 @@ const App: React.FC = () => {
                                     <tbody>
                                       {table.map((row, rowIdx) => (
                                         <tr key={rowIdx} className="border-b border-gray-100 dark:border-gray-600">
-                                          {row.map((cell, cellIdx) => (
-                                            <td key={cellIdx} className="py-2 px-2 border border-gray-200 dark:border-gray-600">
-                                              {cell}
-                                            </td>
-                                          ))}
+                                          {row.map((cell, cellIdx) => {
+                                            // Check if the cell likely contains a numeric value
+                                            const hasNumericValue = /\d/.test(cell) && 
+                                                                   !cell.includes("No.") && 
+                                                                   (rowIdx > 0 || cellIdx > 0); // Skip headers in first row/column
+                                            
+                                            return (
+                                              <td key={cellIdx} className="py-2 px-2 border border-gray-200 dark:border-gray-600 relative">
+                                                {cell}
+                                                {hasNumericValue && (
+                                                  <button 
+                                                    onClick={() => addTableCellAsCustomField(rowIdx, cellIdx, table, tableIdx)}
+                                                    className="absolute right-1 top-1 text-green-500 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300"
+                                                    title="Add to custom fields"
+                                                  >
+                                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                                      <path fillRule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clipRule="evenodd" />
+                                                    </svg>
+                                                  </button>
+                                                )}
+                                              </td>
+                                            );
+                                          })}
                                         </tr>
                                       ))}
                                     </tbody>
