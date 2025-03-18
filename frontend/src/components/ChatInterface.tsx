@@ -130,9 +130,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ roiContext }) => {
   return (
     <div className="flex flex-col h-full bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden" style={{ maxHeight: 'calc(100vh - 80px)' }}>
       {/* Chat header */}
-      <div className="px-4 py-3 bg-blue-600 dark:bg-blue-700 text-white flex-shrink-0">
+      <div className="px-4 py-3 bg-gray-100 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 text-gray-800 dark:text-white flex-shrink-0 rounded-t-lg">
         <h2 className="text-lg font-semibold">ROI Assistant</h2>
-        <p className="text-xs text-blue-100">Ask questions about your ROI calculations</p>
+        <p className="text-xs text-gray-600 dark:text-gray-300">Ask questions about your ROI calculations</p>
       </div>
       
       {/* Messages container with fixed height */}

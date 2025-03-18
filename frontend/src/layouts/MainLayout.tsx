@@ -58,9 +58,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, roiContext }) => {
         {/* Chat interface - second column */}
         <div className={`
           w-[300px] lg:ml-4 flex-shrink-0
-          ${isDesktop ? 'lg:block' : isChatOpen ? 'block fixed right-0 top-[60px] h-[calc(100vh-60px)] z-10 bg-gray-100 dark:bg-gray-900' : 'hidden'}
+          ${isDesktop ? 'lg:block' : isChatOpen ? 'block fixed right-0 top-0 h-screen z-10 bg-gray-100 dark:bg-gray-900' : 'hidden'}
         `}>
-          <div className="sticky top-[60px] pt-2 h-[600px]">
+          <div className="sticky top-0 pt-0 h-[600px] mt-[64px]">
             <ChatInterface roiContext={roiContext} />
           </div>
         </div>
