@@ -56,6 +56,15 @@ const App: React.FC = () => {
   // Add a state to track the newly added field
   const [newFieldId, setNewFieldId] = useState<string | null>(null);
 
+  // ROI context for the chat interface
+  const roiContext = {
+    budget,
+    employees,
+    duration,
+    customFields,
+    roiResults: response
+  };
+
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const fileArray = Array.from(e.target.files);
@@ -440,8 +449,8 @@ const App: React.FC = () => {
   };
 
   return (
-    <MainLayout>
-      <div className="container mx-auto px-4 py-8">
+    <MainLayout roiContext={roiContext}>
+      <div>
         <h1 className="text-2xl font-bold mb-6 text-center text-gray-800 dark:text-gray-100">ROI Calculator Dashboard</h1>
         <Card>
           <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
