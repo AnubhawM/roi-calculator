@@ -9,6 +9,8 @@ import mimetypes
 import json
 from azure.core.credentials import AzureKeyCredential
 from azure.ai.formrecognizer import DocumentAnalysisClient
+from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
 import base64
 import io
 import sys
@@ -42,6 +44,51 @@ try:
 except Exception as e:
     print(f"Error initializing Azure Document Analysis client: {e}")
     print("Document processing functionality will not be available")
+
+# Check if Azure AI Project credentials are available
+ai_project_credentials_available = bool(os.getenv("PROJECT_CONNECTION_STRING"))
+if ai_project_credentials_available:
+    print(f"Azure AI Project credentials available")
+    print(f"  - Connection String set: {'Yes' if os.getenv('PROJECT_CONNECTION_STRING') else 'No'}")
+else:
+    print("Azure AI Project credentials not available - AI Agent functionality will not be available")
+
+# Function to create a new AI Project Client for each request
+def create_ai_project_client():
+    """Create a new AI Project client for each request to avoid connection issues"""
+    if not os.getenv("PROJECT_CONNECTION_STRING"):
+        print("No PROJECT_CONNECTION_STRING environment variable found")
+        return None
+        
+    try:
+        # Create an Azure credential object - more robust to handle various authentication scenarios
+        credential = None
+        try:
+            credential = DefaultAzureCredential(exclude_shared_token_cache_credential=True)
+            print("Successfully created DefaultAzureCredential")
+        except Exception as auth_error:
+            print(f"Warning: Could not create DefaultAzureCredential: {auth_error}")
+            # We still need to proceed with connection string
+        
+        # Create the client with both the credential and connection string
+        # Both are required according to the Azure API
+        client = AIProjectClient.from_connection_string(
+            credential=credential,
+            conn_str=os.getenv("PROJECT_CONNECTION_STRING")
+        )
+        
+        print("Successfully created AI Project client")
+        return client
+    except Exception as e:
+        print(f"Error creating AI Project client: {e}")
+        print(f"Error type: {type(e)}")
+        return None
+
+# Store active threads for each user session
+active_threads = {}
+
+# Store a persistent agent ID that we can reuse
+PERSISTENT_AGENT_ID = None
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -624,6 +671,615 @@ def available_models():
     except Exception as e:
         print(f"Error testing available models: {e}")
         return jsonify({"error": str(e)}), 500
+
+# New function to get or create a persistent agent
+def get_or_create_persistent_agent(client):
+    """Get existing agent or create a new persistent one"""
+    global PERSISTENT_AGENT_ID
+    
+    if PERSISTENT_AGENT_ID:
+        # Try to get the existing agent
+        try:
+            # If the ID is valid, return it to be used
+            # No need to retrieve full agent, just return the ID
+            return PERSISTENT_AGENT_ID
+        except Exception as e:
+            print(f"Error retrieving persistent agent: {e}")
+            # Reset the ID and continue to create a new one
+            PERSISTENT_AGENT_ID = None
+    
+    # Define function to create agent with retries
+    def create_agent_with_retry():
+        return client.agents.create_agent(
+            model=os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME', 'gpt-4o-mini'),
+            name="roi-calculator-persistent-agent",
+            instructions=(
+                "You are an ROI calculation assistant that helps users understand their "
+                "Return on Investment analyses. You can answer questions about the ROI "
+                "calculation methodology, interpret results, explain financial concepts, "
+                "and provide insights based on the calculation context. Always be precise "
+                "with financial figures and calculations. When specific ROI calculation "
+                "data is provided, refer to it directly in your answers. Maintain a helpful "
+                "and informative tone, and reference previous parts of the conversation when relevant."
+            )
+        )
+    
+    # Create a new persistent agent with retry logic
+    try:
+        # Use our retry mechanism to handle potential rate limits
+        agent = retry_with_backoff(
+            create_agent_with_retry,
+            max_retries=3,
+            initial_delay=2,
+            backoff_factor=2
+        )
+        
+        # Store the agent's ID for future use
+        agent_id = agent.id if hasattr(agent, 'id') else str(agent)
+        PERSISTENT_AGENT_ID = agent_id
+        print(f"Created new persistent agent: {PERSISTENT_AGENT_ID}")
+        return PERSISTENT_AGENT_ID
+    except Exception as e:
+        print(f"Error creating persistent agent after retries: {e}")
+        return None
+
+# Also track which threads have already received context information
+threads_with_context = set()
+
+# New function to extract and log token usage
+def log_token_usage(run_info, operation_name):
+    """Extract and log token usage information from a run"""
+    try:
+        print(f"\n----- TOKEN USAGE FOR {operation_name} -----")
+        
+        # Check if run_info has usage directly
+        usage = None
+        if hasattr(run_info, 'usage'):
+            usage = run_info.usage
+        # Check if it's in _data dictionary
+        elif hasattr(run_info, '_data') and isinstance(run_info._data, dict) and 'usage' in run_info._data:
+            usage = run_info._data['usage']
+        # Check if it's directly a dictionary with usage
+        elif isinstance(run_info, dict) and 'usage' in run_info:
+            usage = run_info['usage']
+            
+        if usage:
+            prompt_tokens = usage.get('prompt_tokens', 0) if isinstance(usage, dict) else getattr(usage, 'prompt_tokens', 0)
+            completion_tokens = usage.get('completion_tokens', 0) if isinstance(usage, dict) else getattr(usage, 'completion_tokens', 0)
+            total_tokens = usage.get('total_tokens', 0) if isinstance(usage, dict) else getattr(usage, 'total_tokens', 0)
+            
+            print(f"Prompt tokens: {prompt_tokens}")
+            print(f"Completion tokens: {completion_tokens}")
+            print(f"Total tokens: {total_tokens}")
+            
+            # Check for details on token caching if available
+            if isinstance(usage, dict) and 'prompt_token_details' in usage:
+                details = usage['prompt_token_details']
+                print(f"Token details: {details}")
+                
+            return {
+                'prompt_tokens': prompt_tokens,
+                'completion_tokens': completion_tokens,
+                'total_tokens': total_tokens
+            }
+        else:
+            print("No usage information available")
+            return None
+    except Exception as e:
+        print(f"Error extracting token usage: {e}")
+        return None
+
+# Add a more sophisticated retry mechanism
+def retry_with_backoff(func, *args, max_retries=3, initial_delay=2, backoff_factor=2, **kwargs):
+    """Execute a function with exponential backoff retries on rate limit errors"""
+    retry_count = 0
+    delay = initial_delay
+    
+    while retry_count <= max_retries:
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            error_message = str(e).lower()
+            is_rate_limit = 'rate limit' in error_message or 'too many requests' in error_message
+            
+            if is_rate_limit and retry_count < max_retries:
+                # Try to extract wait time from error message
+                wait_time = None
+                import re
+                time_matches = re.findall(r'(\d+)\s*seconds', error_message)
+                if time_matches:
+                    wait_time = int(time_matches[0])
+                
+                # Use suggested wait time or calculate backoff
+                if wait_time:
+                    actual_delay = wait_time + 2  # Add buffer
+                else:
+                    actual_delay = delay
+                    
+                print(f"Rate limit detected. Retrying in {actual_delay} seconds (attempt {retry_count+1}/{max_retries})...")
+                time.sleep(actual_delay)
+                delay *= backoff_factor  # Increase delay for next retry
+                retry_count += 1
+            else:
+                # Not a rate limit error or max retries exceeded
+                raise
+    
+    raise Exception(f"Max retries ({max_retries}) exceeded")
+
+# Modify the run status checking with gradual polling
+def wait_for_run_completion(ai_project_client, thread_id, run_id, operation_name, max_wait_time=120):
+    """Wait for a run to complete with progressive backoff to reduce API calls"""
+    status = None
+    start_time = time.time()
+    polling_interval = 1  # Start with 1 second interval
+    max_polling_interval = 10  # Maximum polling interval in seconds
+    
+    print(f"Waiting for {operation_name} run to complete...")
+    
+    while time.time() - start_time < max_wait_time:
+        try:
+            # Get run status with retry logic
+            def get_run_status():
+                run_info = ai_project_client.agents.get_run(thread_id, run_id)
+                status = getattr(run_info, 'status', None)
+                return run_info, status
+            
+            run_info, status = retry_with_backoff(get_run_status)
+            
+            if status in ['completed', 'failed', 'cancelled']:
+                print(f"{operation_name} run completed with status: {status}")
+                return run_info, status
+            
+            # Progressive backoff - increase polling interval
+            time.sleep(polling_interval)
+            polling_interval = min(polling_interval * 1.5, max_polling_interval)
+            
+        except Exception as e:
+            print(f"Error checking {operation_name} run status: {e}")
+            # Keep increasing polling interval even on errors
+            time.sleep(polling_interval)
+            polling_interval = min(polling_interval * 1.5, max_polling_interval)
+    
+    print(f"{operation_name} run did not complete within {max_wait_time} seconds")
+    return None, "timeout"
+
+# New endpoint for AI Agent Q&A
+@app.route('/ask', methods=['POST', 'OPTIONS'])
+def ask_question():
+    """Process user questions using Azure AI Agent service"""
+    if request.method == 'OPTIONS':
+        response = make_response()
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Access-Control-Allow-Headers", "*")
+        response.headers.add("Access-Control-Allow-Methods", "*")
+        return response
+    
+    # Create a new AI Project client for this request
+    ai_project_client = create_ai_project_client()
+    if not ai_project_client:
+        return jsonify({"error": "AI Agent service is not available"}), 503
+    
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"error": "Request data is required"}), 400
+        
+        # Extract question and context
+        question = data.get('question')
+        roi_context = data.get('context', {})
+        session_id = data.get('sessionId', str(uuid.uuid4()))
+        
+        if not question:
+            return jsonify({"error": "Question is required"}), 400
+        
+        print(f"Processing question for session {session_id}: {question}")
+        
+        # Format ROI context
+        context_text = ""
+        if roi_context:
+            context_text = "Current ROI Calculation Context:\n"
+            if roi_context.get('budget'):
+                context_text += f"- Budget: ${roi_context.get('budget')}\n"
+            if roi_context.get('employees'):
+                context_text += f"- Impacted Employees: {roi_context.get('employees')}\n"
+            if roi_context.get('duration'):
+                context_text += f"- Project Duration: {roi_context.get('duration')} months\n"
+            
+            # Add custom fields if available
+            custom_fields = roi_context.get('customFields', [])
+            if custom_fields and len(custom_fields) > 0:
+                context_text += "- Custom Fields:\n"
+                for field in custom_fields:
+                    if isinstance(field, dict) and 'title' in field and 'value' in field:
+                        context_text += f"  - {field.get('title')}: {field.get('value')}\n"
+                    elif isinstance(field, dict) and 'name' in field and 'value' in field:
+                        context_text += f"  - {field.get('name')}: {field.get('value')}\n"
+            
+            # Add ROI results if available
+            if roi_context.get('roiResults'):
+                context_text += "\nROI Calculation Results:\n"
+                context_text += roi_context.get('roiResults')
+        
+        # Get or create thread for this session
+        thread_id = active_threads.get(session_id)
+        
+        with ai_project_client:
+            # Get or create the persistent agent
+            agent_id = get_or_create_persistent_agent(ai_project_client)
+            if not agent_id:
+                return jsonify({"error": "Failed to initialize agent"}), 500
+            
+            # Create thread if needed
+            if not thread_id:
+                try:
+                    thread = ai_project_client.agents.create_thread()
+                    # Handle if create_thread returns a string ID instead of a thread object
+                    if isinstance(thread, str):
+                        thread_id = thread
+                    else:
+                        thread_id = thread.id
+                    active_threads[session_id] = thread_id
+                    print(f"Created new thread {thread_id} for session {session_id}")
+                except Exception as e:
+                    print(f"Error creating thread: {e}")
+                    return jsonify({"error": f"Failed to create conversation thread: {str(e)}"}), 500
+            
+            # Add ROI context as a message, but only if we haven't added it to this thread before
+            context_key = f"{thread_id}_context"
+            if context_text and context_key not in threads_with_context:
+                try:
+                    # Add context as user message
+                    ai_project_client.agents.create_message(
+                        thread_id=thread_id,
+                        role="user",
+                        content=f"Here is my current ROI calculation context that you should reference when answering my questions:\n\n{context_text}\n\nPlease acknowledge receipt of this context."
+                    )
+                    
+                    # Process the context message
+                    run = ai_project_client.agents.create_and_process_run(
+                        thread_id=thread_id, 
+                        agent_id=agent_id
+                    )
+                    
+                    # Use improved waiting function
+                    run_info, context_run_status = wait_for_run_completion(
+                        ai_project_client, thread_id, run.id, "Context", max_wait_time=60
+                    )
+                    
+                    if run_info:
+                        # Extract and log token usage for context message
+                        log_token_usage(run_info, "CONTEXT MESSAGE")
+                    
+                    # Add a small delay to ensure any pending operations are complete
+                    time.sleep(2)
+                    
+                    print(f"Added context to thread {thread_id}")
+                    
+                    # Mark this thread as having received context
+                    threads_with_context.add(context_key)
+                except Exception as e:
+                    print(f"Error adding context to thread: {e}")
+                    # Continue even if context addition fails
+            
+            # Add user question
+            try:
+                ai_project_client.agents.create_message(
+                    thread_id=thread_id,
+                    role="user",
+                    content=question
+                )
+                
+                # Process the user's question
+                run = ai_project_client.agents.create_and_process_run(
+                    thread_id=thread_id, 
+                    agent_id=agent_id
+                )
+                
+                # Use improved waiting function
+                run_info, run_status = wait_for_run_completion(
+                    ai_project_client, thread_id, run.id, "Question", max_wait_time=120
+                )
+                
+                if run_info:
+                    # Extract and log token usage for question message
+                    token_usage = log_token_usage(run_info, "QUESTION MESSAGE")
+
+                    if run_status != 'completed':
+                        print(f"Run did not complete successfully. Status: {run_status}")
+                        
+                        if run_status == 'timeout':
+                            return jsonify({
+                                "answer": "I'm sorry, but your request is taking longer than expected to process. Please try again later.",
+                                "sessionId": session_id,
+                                "error": "Request timed out"
+                            })
+                        
+                        # Check if we should return an error based on run status
+                        if run_status == 'failed':
+                            error_message = "The AI agent was unable to process your question."
+                            try:
+                                # Get error details
+                                if run_info:
+                                    error_details = getattr(run_info, 'last_error', {})
+                                    rate_limit_info = check_for_rate_limit(error_details)
+                                    
+                                    if rate_limit_info.get('is_rate_limit'):
+                                        wait_time = rate_limit_info.get('wait_time', 60)
+                                        
+                                        # Wait for the suggested time plus a buffer
+                                        print(f"Rate limit encountered. Waiting {wait_time + 5} seconds before retrying...")
+                                        time.sleep(wait_time + 5)
+                                        
+                                        # Create a new message and try again
+                                        print(f"Retrying question after waiting for rate limit...")
+                                        
+                                        # Create a new message - avoid recreating the run immediately to prevent rate limit
+                                        ai_project_client.agents.create_message(
+                                            thread_id=thread_id,
+                                            role="user",
+                                            content=f"Retrying my previous question: {question}"
+                                        )
+                                        
+                                        # Return a message to the user that their request is being processed
+                                        return jsonify({
+                                            "answer": "I'm processing your request. Please wait a moment and then ask me again. Our service is experiencing high demand right now.",
+                                            "sessionId": session_id
+                                        })
+                                    
+                                    # If it's another type of error, extract details
+                                    if error_details and hasattr(error_details, 'message'):
+                                        error_message = f"Processing failed: {error_details.message}"
+                            
+                            except Exception as e:
+                                print(f"Error handling run failure: {e}")
+                            
+                            # Return a friendly error to the user
+                            return jsonify({
+                                "answer": f"I'm sorry, but I encountered an issue while processing your question. Please try asking in a different way or try again in a few minutes.",
+                                "sessionId": session_id,
+                                "error": error_message
+                            })
+                
+                # Add a small delay to ensure message is available
+                time.sleep(1)
+                
+                # Get messages after processing, SORTED BY CREATED TIME
+                messages = ai_project_client.agents.list_messages(thread_id=thread_id)
+                
+                # Try to get the last assistant message by specifically looking for the most recent one
+                last_msg = None
+                try:
+                    # Get all assistant messages
+                    assistant_messages = []
+                    
+                    if hasattr(messages, 'data') and isinstance(messages.data, list):
+                        # If messages has a data property that's a list, use that
+                        assistant_messages = [msg for msg in messages.data 
+                                             if getattr(msg, 'role', None) == "assistant"]
+                    else:
+                        # Otherwise try to iterate messages directly
+                        assistant_messages = [msg for msg in messages 
+                                             if getattr(msg, 'role', None) == "assistant"]
+                    
+                    if assistant_messages:
+                        # Sort assistant messages by creation time if possible
+                        if all(hasattr(msg, 'created_at') for msg in assistant_messages):
+                            assistant_messages.sort(key=lambda x: x.created_at, reverse=True)
+                        
+                        # Get the most recent assistant message
+                        last_msg = assistant_messages[0]
+                        print(f"Found latest assistant message: {last_msg.id if hasattr(last_msg, 'id') else 'unknown id'}")
+                except Exception as e:
+                    print(f"Error getting assistant messages: {e}")
+                
+                # Extract answer from the message based on its structure
+                answer = None
+                if last_msg:
+                    try:
+                        print(f"Message structure type: {type(last_msg)}")
+                        print(f"Message attributes: {dir(last_msg)}")
+                        
+                        # Try to print the full message content for debugging
+                        try:
+                            print(f"Full message content: {last_msg}")
+                            if hasattr(last_msg, 'model_dump'):
+                                print(f"Model dump: {last_msg.model_dump()}")
+                            elif hasattr(last_msg, 'to_dict'):
+                                print(f"To dict: {last_msg.to_dict()}")
+                        except Exception as e:
+                            print(f"Error dumping message: {e}")
+                        
+                        # Handle the new format where content might be an array of content blocks
+                        if hasattr(last_msg, 'content') and isinstance(last_msg.content, list):
+                            # Content is a list of content blocks
+                            content_blocks = last_msg.content
+                            combined_text = []
+                            
+                            print(f"Content is a list with {len(content_blocks)} blocks")
+                            for i, block in enumerate(content_blocks):
+                                print(f"Block {i} type: {type(block)}")
+                                print(f"Block {i} content: {block}")
+                                
+                                if isinstance(block, dict):
+                                    if 'text' in block and isinstance(block['text'], dict) and 'value' in block['text']:
+                                        combined_text.append(block['text']['value'])
+                                        print(f"Added text from block {i}: {block['text']['value'][:50]}...")
+                                    elif 'type' in block and block['type'] == 'text':
+                                        if 'text' in block and isinstance(block['text'], dict) and 'value' in block['text']:
+                                            combined_text.append(block['text']['value'])
+                                            print(f"Added text from typed block {i}: {block['text']['value'][:50]}...")
+                                        
+                                # Try to handle custom object types
+                                elif hasattr(block, 'type') and getattr(block, 'type') == 'text':
+                                    if hasattr(block, 'text') and hasattr(block.text, 'value'):
+                                        combined_text.append(block.text.value)
+                                        print(f"Added text from object block {i}: {block.text.value[:50]}...")
+                            
+                            if combined_text:
+                                answer = ' '.join(combined_text)
+                                print(f"Combined text answer: {answer[:100]}...")
+                            else:
+                                print("No text could be extracted from content blocks")
+                                # Try a fallback approach - convert the whole thing to string
+                                try:
+                                    answer = f"Content available but format not recognized. Raw: {str(content_blocks)}"
+                                except:
+                                    answer = "Content available but format could not be interpreted."
+                        # Original structure with text.value
+                        elif hasattr(last_msg, 'text') and hasattr(last_msg.text, 'value'):
+                            answer = last_msg.text.value
+                            print(f"Text.value format: {answer[:100]}...")
+                        # Alternative structure with direct content
+                        elif hasattr(last_msg, 'content') and isinstance(last_msg.content, str):
+                            answer = last_msg.content
+                            print(f"Direct content string: {answer[:100]}...")
+                        # Dictionary structure
+                        elif isinstance(last_msg, dict):
+                            if 'content' in last_msg and isinstance(last_msg['content'], str):
+                                answer = last_msg['content']
+                                print(f"Dict content string: {answer[:100]}...")
+                            elif 'text' in last_msg and 'value' in last_msg['text']:
+                                answer = last_msg['text']['value']
+                                print(f"Dict text.value: {answer[:100]}...")
+                        # String content directly
+                        elif isinstance(last_msg, str):
+                            answer = last_msg
+                            print(f"Direct string: {answer[:100]}...")
+                    except Exception as e:
+                        print(f"Error extracting message content: {e}")
+                        print(f"Exception type: {type(e)}")
+                        print(f"Traceback: {sys.exc_info()}")
+                        # Try to convert the message to string as a fallback
+                        try:
+                            answer = f"Message received but could not be properly formatted. Raw content: {str(last_msg)}"
+                        except Exception as inner_e:
+                            print(f"Even fallback formatting failed: {inner_e}")
+                            answer = "Message received but could not be displayed."
+                
+                if answer:
+                    print(f"Got answer from agent: {answer[:100]}...")
+                    return jsonify({
+                        "answer": answer,
+                        "sessionId": session_id
+                    })
+                else:
+                    return jsonify({"error": "No response from agent"}), 500
+                    
+            except Exception as e:
+                print(f"Error processing question: {e}")
+                return jsonify({"error": f"Failed to process question: {str(e)}"}), 500
+    
+    except Exception as e:
+        print(f"Error in ask_question: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        # Ensure client is properly closed
+        if ai_project_client:
+            try:
+                ai_project_client.close()
+            except:
+                pass
+
+# Health check for AI agent service
+@app.route('/agent_health', methods=['GET'])
+def agent_health():
+    """Check if the AI agent service is available and working"""
+    # Create a new AI Project client for this request
+    ai_project_client = create_ai_project_client()
+    if not ai_project_client:
+        return jsonify({
+            "status": "unavailable", 
+            "error": "AI Agent client not initialized",
+            "connection_info": {
+                "connection_string_provided": bool(os.getenv('PROJECT_CONNECTION_STRING'))
+            }
+        }), 503
+    
+    try:
+        with ai_project_client:
+            # Check if we can get or create the persistent agent
+            agent_id = get_or_create_persistent_agent(ai_project_client)
+            
+            if agent_id:
+                return jsonify({
+                    "status": "available",
+                    "agent_id": agent_id,
+                    "connection_info": {
+                        "connection_string_provided": bool(os.getenv('PROJECT_CONNECTION_STRING'))
+                    }
+                })
+            else:
+                return jsonify({
+                    "status": "error",
+                    "error": "Failed to get or create persistent agent",
+                    "connection_info": {
+                        "connection_string_provided": bool(os.getenv('PROJECT_CONNECTION_STRING'))
+                    }
+                }), 500
+    
+    except Exception as e:
+        print(f"Error checking AI agent health: {e}")
+        return jsonify({
+            "status": "error", 
+            "error": str(e),
+            "connection_info": {
+                "connection_string_provided": bool(os.getenv('PROJECT_CONNECTION_STRING'))
+            }
+        }), 500
+    finally:
+        # Ensure client is properly closed
+        if ai_project_client:
+            try:
+                ai_project_client.close()
+            except:
+                pass
+
+# New function to check for and log rate limit errors
+def check_for_rate_limit(error_details):
+    """Check if error is related to rate limits and log relevant information"""
+    try:
+        # Check if this is a rate limit error
+        is_rate_limit = False
+        wait_time = None
+        
+        # Extract error code and message
+        error_code = None
+        error_message = None
+        
+        if isinstance(error_details, dict):
+            error_code = error_details.get('code')
+            error_message = error_details.get('message')
+        else:
+            error_code = getattr(error_details, 'code', None)
+            error_message = getattr(error_details, 'message', None)
+        
+        # Check for rate limit indicators
+        if error_code == 'rate_limit_exceeded' or (error_message and 'rate limit' in error_message.lower()):
+            is_rate_limit = True
+            print("\n----- RATE LIMIT DETECTED -----")
+            print(f"Error code: {error_code}")
+            print(f"Error message: {error_message}")
+            
+            # Try to extract wait time from message if present
+            if error_message:
+                import re
+                time_matches = re.findall(r'(\d+)\s*seconds', error_message)
+                if time_matches:
+                    wait_time = int(time_matches[0])
+                    print(f"Suggested wait time: {wait_time} seconds")
+            
+            return {
+                'is_rate_limit': True,
+                'error_code': error_code,
+                'error_message': error_message,
+                'wait_time': wait_time
+            }
+        
+        return {'is_rate_limit': False}
+    
+    except Exception as e:
+        print(f"Error checking for rate limit: {e}")
+        return {'is_rate_limit': False}
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

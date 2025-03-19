@@ -7,3 +7,6 @@ requests==2.32.3
 SQLAlchemy==2.0.37
 azure-ai-documentintelligence==1.0.1
 azure-ai-formrecognizer==3.3.3
+azure-ai-projects==1.0.0b7
+azure-identity==1.21.0
+azure-cli==2.70.0
