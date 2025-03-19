@@ -31,10 +31,41 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ roiContext }) => {
   ]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [sessionId, setSessionId] = useState<string>('');
+  const [serviceStatus, setServiceStatus] = useState<'available' | 'unavailable' | 'checking'>('checking');
+  const [error, setError] = useState<string | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Generate a session ID on first load
+  useEffect(() => {
+    // Generate a unique session ID if not already set
+    if (!sessionId) {
+      setSessionId(`session_${Math.random().toString(36).substring(2, 15)}`);
+    }
+
+    // Check if agent service is available
+    const checkAgentHealth = async () => {
+      try {
+        const response = await axios.get(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/agent_health`);
+        if (response.data.status === 'available') {
+          setServiceStatus('available');
+          setError(null);
+        } else {
+          setServiceStatus('unavailable');
+          setError('ROI Assistant service is currently unavailable. Some features may be limited.');
+        }
+      } catch (error) {
+        console.error('Error checking agent service:', error);
+        setServiceStatus('unavailable');
+        setError('ROI Assistant service is currently unavailable. Some features may be limited.');
+      }
+    };
+
+    checkAgentHealth();
+  }, [sessionId]);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -69,6 +100,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ roiContext }) => {
   const sendMessage = async () => {
     if (inputValue.trim() === '' || isLoading) return;
     
+    // Clear any transient errors
+    setError(null);
+    
     const userMessage: Message = {
       id: Date.now().toString(),
       content: inputValue.trim(),
@@ -80,50 +114,103 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ roiContext }) => {
     setInputValue('');
     setIsLoading(true);
     
-    try {
-      // Here you would connect to your Azure AI Agent or Search service
-      // For now, we'll simulate a response
+    // If service is unavailable, provide a fallback message
+    if (serviceStatus === 'unavailable') {
       setTimeout(() => {
+        const fallbackMessage: Message = {
+          id: Date.now().toString(),
+          content: 'I apologize, but the ROI Assistant service is currently unavailable. Please try again later or contact support if the issue persists.',
+          sender: 'assistant',
+          timestamp: new Date(),
+        };
+        setMessages(prev => [...prev, fallbackMessage]);
+        setIsLoading(false);
+      }, 1000);
+      return;
+    }
+    
+    try {
+      // Call backend API with Azure AI Agent Service
+      const response = await axios.post(
+        `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/ask`, 
+        {
+          question: userMessage.content,
+          context: roiContext,
+          sessionId: sessionId
+        }
+      );
+      
+      // Handle successful response
+      if (response.data && response.data.answer) {
         const assistantMessage: Message = {
           id: (Date.now() + 1).toString(),
-          content: `I'm analyzing your question about ROI calculations. This would connect to Azure AI services in a real implementation.`,
+          content: response.data.answer,
           sender: 'assistant',
           timestamp: new Date(),
         };
         
         setMessages(prev => [...prev, assistantMessage]);
-        setIsLoading(false);
-      }, 1000);
-      
-      // Uncomment and adapt when backend is ready
-      /*
-      const response = await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/ask`, {
-        question: userMessage.content,
-        context: roiContext
-      });
-      
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: response.data.answer,
-        sender: 'assistant',
-        timestamp: new Date(),
-      };
-      
-      setMessages(prev => [...prev, assistantMessage]);
-      */
+        
+        // Store session ID if returned from backend
+        if (response.data.sessionId) {
+          setSessionId(response.data.sessionId);
+        }
+      } else {
+        throw new Error('Received invalid response from assistant');
+      }
     } catch (error) {
       console.error('Error sending message:', error);
       
-      const errorMessage: Message = {
+      // Get the error message
+      let errorMessage = 'Sorry, I encountered an error processing your question. Please try again.';
+      if (axios.isAxiosError(error) && error.response?.data?.error) {
+        errorMessage = `Error: ${error.response.data.error}`;
+      } else if (error instanceof Error) {
+        errorMessage = `Error: ${error.message}`;
+      }
+      
+      const errorResponseMessage: Message = {
         id: (Date.now() + 1).toString(),
-        content: 'Sorry, I encountered an error processing your question. Please try again.',
+        content: errorMessage,
         sender: 'assistant',
         timestamp: new Date(),
       };
       
-      setMessages(prev => [...prev, errorMessage]);
+      setMessages(prev => [...prev, errorResponseMessage]);
+      setError('An error occurred. Service might be unavailable.');
+      setServiceStatus('unavailable');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const retryConnection = async () => {
+    setError('Checking service status...');
+    setServiceStatus('checking');
+    
+    try {
+      const response = await axios.get(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/agent_health`);
+      if (response.data.status === 'available') {
+        setServiceStatus('available');
+        setError(null);
+        
+        // Add a system message
+        const systemMessage: Message = {
+          id: Date.now().toString(),
+          content: 'Connection restored! You can now ask questions about your ROI calculations.',
+          sender: 'assistant',
+          timestamp: new Date(),
+        };
+        
+        setMessages(prev => [...prev, systemMessage]);
+      } else {
+        setServiceStatus('unavailable');
+        setError('ROI Assistant service is still unavailable. Please try again later.');
+      }
+    } catch (error) {
+      console.error('Error rechecking service:', error);
+      setServiceStatus('unavailable');
+      setError('ROI Assistant service is currently unavailable. Please try again later.');
     }
   };
 
@@ -131,8 +218,21 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ roiContext }) => {
     <div className="flex flex-col h-full bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden" style={{ maxHeight: 'calc(100vh - 80px)' }}>
       {/* Chat header */}
       <div className="px-4 py-3 bg-gray-100 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 text-gray-800 dark:text-white flex-shrink-0 rounded-t-lg">
-        <h2 className="text-lg font-semibold">ROI Assistant</h2>
+        <div className="flex justify-between items-center">
+          <h2 className="text-lg font-semibold">ROI Assistant</h2>
+          {serviceStatus === 'unavailable' && (
+            <button 
+              onClick={retryConnection}
+              className="text-xs bg-blue-500 hover:bg-blue-600 text-white py-1 px-2 rounded"
+            >
+              Retry Connection
+            </button>
+          )}
+        </div>
         <p className="text-xs text-gray-600 dark:text-gray-300">Ask questions about your ROI calculations</p>
+        {error && (
+          <p className="text-xs text-red-500 mt-1">{error}</p>
+        )}
       </div>
       
       {/* Messages container with fixed height */}
@@ -188,9 +288,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ roiContext }) => {
             value={inputValue}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
-            placeholder="Ask a question about your ROI..."
+            placeholder={serviceStatus === 'unavailable' 
+              ? "Service unavailable. You can still type a message..." 
+              : "Ask a question about your ROI..."}
             className="flex-1 resize-none overflow-hidden rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 p-2 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[40px] max-h-[120px]"
             rows={1}
+            disabled={isLoading}
           />
           <button
             onClick={sendMessage}
