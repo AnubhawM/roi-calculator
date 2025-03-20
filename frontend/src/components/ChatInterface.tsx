@@ -1,5 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
+import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
+import '../styles/ROIAnalysis.css';
 
 // Define message interface
 interface Message {
@@ -95,6 +100,65 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ roiContext }) => {
       e.preventDefault();
       sendMessage();
     }
+  };
+
+  // Function to prepare content for markdown rendering - similar to App.tsx
+  const prepareContent = (text: string): string => {
+    if (!text) return '';
+
+    // Fix any common issues with formatting
+    let processedText = text
+      // Clean up any LaTeX-style formatting that might have been used
+      .replace(/\\{/g, '{')
+      .replace(/\\}/g, '}')
+      .replace(/\\\[/g, '')
+      .replace(/\\\]/g, '')
+      
+      // Remove any CSS class strings that might have been included
+      .replace(/text-[a-z-0-9]+ /g, '')
+      .replace(/m[tblr]-[0-9]+ /g, '')
+      .replace(/dark:[a-z-0-9]+ /g, '')
+      
+      // Ensure proper bullet point formatting with a space after dash
+      .replace(/^-([^\s])/gm, '- $1')
+      
+      // Fix LaTeX math expressions - ensure they have proper delimiters
+      // First handle specifically the ROI and Payback Period formulas
+      .replace(/\\text{ROI}.+?\\times\s*100/g, (match) => {
+        if (!match.startsWith('$')) {
+          return `$${match}$`;
+        }
+        return match;
+      })
+      .replace(/\\text{Payback Period}.+?\\text{years}/g, (match) => {
+        if (!match.startsWith('$')) {
+          return `$${match}$`;
+        }
+        return match;
+      });
+    
+    // Detect lines that contain LaTeX math notation but aren't wrapped in delimiters
+    processedText = processedText.split('\n').map(line => {
+      if (
+        (line.includes('\\frac') || 
+         line.includes('\\text') || 
+         line.includes('\\times') || 
+         line.includes('\\approx')) && 
+        !line.includes('$')
+      ) {
+        return `$${line}$`;
+      }
+      return line;
+    }).join('\n');
+
+    return processedText;
+  };
+
+  // Format currency values with commas
+  const formatCurrency = (text: string): string => {
+    return text.replace(/\$(\d+)(?=\D)/g, (match, number) => {
+      return '$' + Number(number).toLocaleString();
+    });
   };
 
   const sendMessage = async () => {
@@ -252,10 +316,27 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ roiContext }) => {
               className={`p-3 rounded-lg ${
                 message.sender === 'user'
                   ? 'bg-blue-500 text-white rounded-br-none'
-                  : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-bl-none'
+                  : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-bl-none roi-analysis'
               }`}
             >
-              {message.content}
+              {message.sender === 'assistant' ? (
+                <ReactMarkdown
+                  remarkPlugins={[remarkMath]}
+                  rehypePlugins={[rehypeKatex]}
+                  components={{
+                    // Customize heading styles for chat
+                    h3: ({node, ...props}) => <h3 className="text-base font-bold mt-2 mb-1 text-blue-600 dark:text-blue-400" {...props} />,
+                    // Customize paragraph styles
+                    p: ({node, ...props}) => <p className="mb-2" {...props} />,
+                    // Customize list styles
+                    li: ({node, ...props}) => <li className="ml-4" {...props} />
+                  }}
+                >
+                  {formatCurrency(prepareContent(message.content))}
+                </ReactMarkdown>
+              ) : (
+                message.content
+              )}
             </div>
             <div
               className={`text-xs mt-1 text-gray-500 ${

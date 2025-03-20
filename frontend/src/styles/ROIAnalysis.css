@@ -1,0 +1,137 @@
+/* ROI Analysis Styles */
+
+.roi-analysis {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  line-height: 1.6;
+}
+
+/* Math formula styling */
+.roi-analysis .katex {
+  font-size: 1.1em;
+  margin: 0.5rem 0;
+}
+
+/* Handle display math (centered equations) */
+.roi-analysis .katex-display {
+  margin: 1.5rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.5rem 0;
+  text-align: center;
+}
+
+/* Make sure inline math doesn't break line height */
+.roi-analysis p .katex {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+/* Larger display formulas */
+.roi-analysis .math.math-display .katex {
+  font-size: 1.2em;
+}
+
+/* Ensure ROI formulas have proper spacing */
+.roi-analysis p:has(.katex) {
+  margin: 1rem 0;
+  line-height: 2;
+}
+
+/* Section headers */
+.roi-analysis h3 {
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 0.25rem;
+}
+
+/* Lists */
+.roi-analysis ul {
+  margin-left: 1rem;
+  margin-bottom: 1rem;
+}
+
+.roi-analysis li {
+  margin-bottom: 0.25rem;
+}
+
+/* Tables */
+.roi-analysis table {
+  border-collapse: collapse;
+  margin: 1rem 0;
+  width: 100%;
+}
+
+.roi-analysis th,
+.roi-analysis td {
+  border: 1px solid #e5e7eb;
+  padding: 0.5rem;
+  text-align: left;
+}
+
+.roi-analysis th {
+  background-color: #f3f4f6;
+}
+
+/* Dark mode adjustments */
+@media (prefers-color-scheme: dark) {
+  .roi-analysis th {
+    background-color: #374151;
+  }
+  
+  .roi-analysis th,
+  .roi-analysis td {
+    border-color: #4b5563;
+  }
+  
+  /* Improve contrast for math in dark mode */
+  .roi-analysis .katex {
+    color: #e2e8f0;
+  }
+}
+
+/* Chat-specific styles */
+/* Smaller font size for math in chat bubbles */
+.mr-auto > .roi-analysis .katex {
+  font-size: 0.95em;
+}
+
+/* Adjust spacing in chat messages */
+.mr-auto > .roi-analysis p {
+  margin: 0.5rem 0;
+}
+
+.mr-auto > .roi-analysis h3 {
+  margin-top: 0.75rem;
+  margin-bottom: 0.5rem;
+  font-size: 1rem;
+  border-bottom: none;
+}
+
+/* Make math formulas wrap in chat bubbles */
+.mr-auto > .roi-analysis .katex-display {
+  margin: 0.75rem 0;
+  white-space: normal;
+  overflow-x: auto;
+}
+
+/* Ensure proper spacing in chat */
+.mr-auto > .roi-analysis .katex {
+  margin: 0.25rem 0;
+}
+
+/* Make lists more compact in chat */
+.mr-auto > .roi-analysis ul {
+  margin-left: 0.75rem;
+  margin-bottom: 0.5rem;
+  padding-left: 0.5rem;
+}
+
+.mr-auto > .roi-analysis li {
+  margin-bottom: 0.125rem;
+}
+
+/* Make sure math expressions don't overflow chat bubbles */
+.mr-auto > .roi-analysis {
+  overflow-x: auto;
+} 

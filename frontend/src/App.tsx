@@ -7,6 +7,11 @@ import MainLayout from './layouts/MainLayout';
 import Card from './components/ui/Card';
 import { GenerateResponse } from './types/api';
 import UploadIcon from './components/UploadIcon';
+import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
+import './styles/ROIAnalysis.css';
 
 // Custom field type definition
 interface CustomField {
@@ -227,14 +232,37 @@ const App: React.FC = () => {
       .replace(/m[tblr]-[0-9]+ /g, '')
       .replace(/dark:[a-z-0-9]+ /g, '')
       
-      // Format specific ROI formula 
-      .replace(
-        /ROI\s*=\s*\(([^)\n]+)\)\s*\/\s*([^)\n]+)\s*×\s*100/gm,
-        'ROI = ($1) / ($2) × 100%'
-      )
-      
       // Ensure proper bullet point formatting with a space after dash
-      .replace(/^-([^\s])/gm, '- $1');
+      .replace(/^-([^\s])/gm, '- $1')
+      
+      // Fix LaTeX math expressions - ensure they have proper delimiters
+      // First handle specifically the ROI and Payback Period formulas
+      .replace(/\\text{ROI}.+?\\times\s*100/g, (match) => {
+        if (!match.startsWith('$')) {
+          return `$${match}$`;
+        }
+        return match;
+      })
+      .replace(/\\text{Payback Period}.+?\\text{years}/g, (match) => {
+        if (!match.startsWith('$')) {
+          return `$${match}$`;
+        }
+        return match;
+      });
+    
+    // Detect lines that contain LaTeX math notation but aren't wrapped in delimiters
+    processedText = processedText.split('\n').map(line => {
+      if (
+        (line.includes('\\frac') || 
+         line.includes('\\text') || 
+         line.includes('\\times') || 
+         line.includes('\\approx')) && 
+        !line.includes('$')
+      ) {
+        return `$${line}$`;
+      }
+      return line;
+    }).join('\n');
 
     return processedText;
   };
@@ -625,8 +653,21 @@ const App: React.FC = () => {
           {response && (
             <div className="mt-6 p-6 bg-gray-50 dark:bg-gray-800 rounded-lg shadow-sm">
               <h2 className="text-xl font-bold mb-4 text-blue-700 dark:text-blue-400 border-b border-gray-200 dark:border-gray-700 pb-2">ROI Analysis</h2>
-              <div className="text-gray-800 dark:text-gray-200 text-base leading-relaxed font-light roi-analysis whitespace-pre-wrap">
-                {formatCurrency(prepareContent(response))}
+              <div className="text-gray-800 dark:text-gray-200 text-base leading-relaxed font-light roi-analysis">
+                <ReactMarkdown
+                  remarkPlugins={[remarkMath]}
+                  rehypePlugins={[rehypeKatex]}
+                  components={{
+                    // Customize heading styles
+                    h3: ({node, ...props}) => <h3 className="text-lg font-bold mt-4 mb-2 text-blue-600 dark:text-blue-400" {...props} />,
+                    // Customize paragraph styles
+                    p: ({node, ...props}) => <p className="mb-3" {...props} />,
+                    // Customize list styles
+                    li: ({node, ...props}) => <li className="ml-4" {...props} />
+                  }}
+                >
+                  {formatCurrency(prepareContent(response))}
+                </ReactMarkdown>
               </div>
             </div>
           )}
