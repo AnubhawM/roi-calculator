@@ -12,6 +12,10 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 import './styles/ROIAnalysis.css';
+import { 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  PieChart, Pie, Cell, LineChart, Line, Area, AreaChart
+} from 'recharts';
 
 // Custom field type definition
 interface CustomField {
@@ -40,6 +44,23 @@ interface ExtractedData {
 interface DocumentProcessingResult {
   results: ExtractedData[];
   message: string;
+}
+
+// Interface for chart data
+interface ChartData {
+  roi: number;
+  costSavings: number;
+  paybackPeriod: number;
+  npv: number;
+  totalCost: number;
+  totalBenefit: number;
+  annualBenefit: number;
+  monthlyData?: Array<{
+    month: number;
+    cost: number;
+    benefit: number;
+    cumulativeBenefit: number;
+  }>;
 }
 
 const App: React.FC = () => {
@@ -89,6 +110,16 @@ const App: React.FC = () => {
   };
 
   const contextVersion = calculateContextVersion();
+
+  const [chartData, setChartData] = useState<ChartData>({
+    roi: 0,
+    costSavings: 0,
+    paybackPeriod: 0,
+    npv: 0,
+    totalCost: 0,
+    totalBenefit: 0,
+    annualBenefit: 0
+  });
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -406,6 +437,98 @@ const App: React.FC = () => {
     }
   };
 
+  // Function to extract numeric data from response text for charts
+  const extractChartDataFromResponse = (text: string): ChartData => {
+    const data: ChartData = {
+      roi: 0,
+      costSavings: 0,
+      paybackPeriod: 0,
+      npv: 0,
+      totalCost: 0,
+      totalBenefit: 0,
+      annualBenefit: 0
+    };
+    
+    try {
+      // Extract ROI percentage
+      const roiMatch = text.match(/ROI.*?(\d+(?:\.\d+)?)%/i);
+      if (roiMatch && roiMatch[1]) {
+        data.roi = parseFloat(roiMatch[1]);
+      }
+      
+      // Extract cost savings
+      const savingsMatch = text.match(/savings.*?\$\s*(\d+(?:,\d{3})*(?:\.\d+)?)/i);
+      if (savingsMatch && savingsMatch[1]) {
+        data.costSavings = parseFloat(savingsMatch[1].replace(/,/g, ''));
+      }
+      
+      // Extract payback period
+      const paybackMatch = text.match(/payback period.*?(\d+(?:\.\d+)?)\s*(?:months|years)/i);
+      if (paybackMatch && paybackMatch[1]) {
+        data.paybackPeriod = parseFloat(paybackMatch[1]);
+      }
+      
+      // Extract NPV if present
+      const npvMatch = text.match(/NPV.*?\$\s*(\d+(?:,\d{3})*(?:\.\d+)?)/i);
+      if (npvMatch && npvMatch[1]) {
+        data.npv = parseFloat(npvMatch[1].replace(/,/g, ''));
+      }
+      
+      // Extract total cost
+      const totalCostMatch = text.match(/total cost.*?\$\s*(\d+(?:,\d{3})*(?:\.\d+)?)/i);
+      if (totalCostMatch && totalCostMatch[1]) {
+        data.totalCost = parseFloat(totalCostMatch[1].replace(/,/g, ''));
+      } else {
+        // Fallback - try to extract from budget
+        data.totalCost = parseFloat(budget.replace(/,/g, '')) || 0;
+      }
+      
+      // Extract total benefit
+      const totalBenefitMatch = text.match(/total benefit.*?\$\s*(\d+(?:,\d{3})*(?:\.\d+)?)/i);
+      if (totalBenefitMatch && totalBenefitMatch[1]) {
+        data.totalBenefit = parseFloat(totalBenefitMatch[1].replace(/,/g, ''));
+      } else if (data.roi > 0 && data.totalCost > 0) {
+        // Calculate total benefit from ROI and total cost
+        data.totalBenefit = data.totalCost * (1 + data.roi / 100);
+      }
+      
+      // Extract annual benefit or calculate it
+      const annualBenefitMatch = text.match(/annual benefit.*?\$\s*(\d+(?:,\d{3})*(?:\.\d+)?)/i);
+      if (annualBenefitMatch && annualBenefitMatch[1]) {
+        data.annualBenefit = parseFloat(annualBenefitMatch[1].replace(/,/g, ''));
+      } else if (data.totalBenefit > 0 && duration) {
+        // Calculate annual benefit based on total benefit and project duration
+        const durationInYears = parseFloat(duration) / 12;
+        data.annualBenefit = data.totalBenefit / durationInYears;
+      }
+      
+      // Generate monthly data for a timeline chart if we have enough information
+      if (data.totalCost > 0 && data.annualBenefit > 0 && duration) {
+        const durationMonths = parseInt(duration);
+        const monthlyData = [];
+        const monthlyCost = data.totalCost / durationMonths;
+        const monthlyBenefit = data.annualBenefit / 12;
+        
+        let cumulativeBenefit = 0;
+        for (let i = 1; i <= durationMonths; i++) {
+          cumulativeBenefit += monthlyBenefit;
+          monthlyData.push({
+            month: i,
+            cost: i === 1 ? data.totalCost : 0, // Assume all costs incurred in month 1
+            benefit: monthlyBenefit,
+            cumulativeBenefit: cumulativeBenefit
+          });
+        }
+        
+        data.monthlyData = monthlyData;
+      }
+    } catch (e) {
+      console.error("Error extracting chart data:", e);
+    }
+    
+    return data;
+  };
+
   const calculateROI = async () => {
     // Validate inputs
     if (!budget.trim() || !employees.trim() || !duration.trim()) {
@@ -456,6 +579,10 @@ const App: React.FC = () => {
       );
       
       setResponse(response.data.response);
+      
+      // Extract chart data from the response
+      const extractedChartData = extractChartDataFromResponse(response.data.response);
+      setChartData(extractedChartData);
     } catch (error) {
       console.error(error);
       toast.error('Failed to calculate ROI. Please try again.');
@@ -657,6 +784,133 @@ const App: React.FC = () => {
                   {formatCurrency(prepareContent(response))}
                 </ReactMarkdown>
               </div>
+              
+              {/* ROI Visualization Section - Using Recharts */}
+              {chartData && (chartData.roi > 0 || chartData.totalCost > 0) && (
+                <div className="mt-8 mb-2">
+                  <h3 className="text-lg font-bold mb-4 text-blue-600 dark:text-blue-400">ROI Visualization</h3>
+                  
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* Cost-Benefit Comparison Chart */}
+                    {chartData.totalCost > 0 && chartData.totalBenefit > 0 && (
+                      <div className="bg-white dark:bg-gray-700 p-4 rounded-lg shadow">
+                        <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Cost-Benefit Analysis</h4>
+                        <div className="h-64">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart
+                              data={[
+                                { name: 'Cost', value: chartData.totalCost },
+                                { name: 'Benefit', value: chartData.totalBenefit }
+                              ]}
+                              margin={{ top: 10, right: 10, left: 50, bottom: 20 }}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis dataKey="name" />
+                              <YAxis 
+                                tickFormatter={(value) => `$${value.toLocaleString()}`} 
+                                width={80}
+                              />
+                              <Tooltip formatter={(value) => [`$${Number(value).toLocaleString()}`, '']} />
+                              <Legend wrapperStyle={{ paddingTop: '10px' }} />
+                              <Bar dataKey="value" name="Amount" radius={[4, 4, 0, 0]}>
+                                <Cell fill="#ef4444" />
+                                <Cell fill="#22c55e" />
+                              </Bar>
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                        <div className="mt-2 text-center text-sm text-gray-600 dark:text-gray-400">
+                          Net Benefit: ${(chartData.totalBenefit - chartData.totalCost).toLocaleString()}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* ROI and Payback Period Chart */}
+                    {chartData.roi > 0 && (
+                      <div className="bg-white dark:bg-gray-700 p-4 rounded-lg shadow">
+                        <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">ROI and Payback Period</h4>
+                        <div className="h-64">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                              <Pie
+                                data={[
+                                  { name: 'ROI', value: chartData.roi },
+                                  { name: 'Baseline', value: 100 - chartData.roi > 0 ? 100 - chartData.roi : 0 }
+                                ]}
+                                cx="50%"
+                                cy="50%"
+                                innerRadius={60}
+                                outerRadius={80}
+                                paddingAngle={5}
+                                dataKey="value"
+                                label={({ name, percent }) => name === 'ROI' ? `${(percent * 100).toFixed(0)}%` : ''}
+                              >
+                                <Cell fill="#3b82f6" />
+                                <Cell fill="#e5e7eb" />
+                              </Pie>
+                              <Tooltip formatter={(value, name) => [name === 'ROI' ? `${value}%` : '', name]} />
+                            </PieChart>
+                          </ResponsiveContainer>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 mt-2">
+                          <div className="text-center">
+                            <div className="text-3xl font-bold text-blue-600 dark:text-blue-400">{chartData.roi.toFixed(1)}%</div>
+                            <div className="text-sm text-gray-600 dark:text-gray-400">Return on Investment</div>
+                          </div>
+                          {chartData.paybackPeriod > 0 && (
+                            <div className="text-center">
+                              <div className="text-3xl font-bold text-orange-500 dark:text-orange-400">{chartData.paybackPeriod.toFixed(1)}</div>
+                              <div className="text-sm text-gray-600 dark:text-gray-400">{chartData.paybackPeriod === 1 ? 'Month' : 'Months'} Payback</div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Investment Timeline Chart */}
+                    {chartData.monthlyData && chartData.monthlyData.length > 0 && (
+                      <div className="bg-white dark:bg-gray-700 p-4 rounded-lg shadow lg:col-span-2">
+                        <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Investment Timeline</h4>
+                        <div className="h-64">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <AreaChart
+                              data={chartData.monthlyData}
+                              margin={{ top: 20, right: 20, left: 50, bottom: 30 }}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis 
+                                dataKey="month" 
+                                label={{ 
+                                  value: 'Month', 
+                                  position: 'insideBottom', 
+                                  offset: -15,
+                                  style: { textAnchor: 'middle' }
+                                }} 
+                              />
+                              <YAxis 
+                                tickFormatter={(value) => `$${value.toLocaleString()}`} 
+                                width={80}
+                              />
+                              <Tooltip formatter={(value) => [`$${Number(value).toLocaleString()}`, '']} />
+                              <Legend 
+                                verticalAlign="top" 
+                                height={36}
+                                wrapperStyle={{ paddingTop: '5px' }}
+                              />
+                              <Area type="monotone" dataKey="cumulativeBenefit" name="Cumulative Benefit" fill="#22c55e" stroke="#16a34a" fillOpacity={0.3} />
+                              <Area type="monotone" dataKey="cost" name="Cost" fill="#ef4444" stroke="#dc2626" fillOpacity={0.3} />
+                              <Line type="monotone" dataKey="benefit" name="Monthly Benefit" stroke="#3b82f6" strokeWidth={2} dot={false} />
+                            </AreaChart>
+                          </ResponsiveContainer>
+                        </div>
+                        <div className="mt-2 text-center text-sm text-gray-600 dark:text-gray-400">
+                          Break-even point occurs when cumulative benefits exceed initial costs
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
           
