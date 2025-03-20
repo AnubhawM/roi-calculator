@@ -737,6 +737,9 @@ def get_or_create_persistent_agent(client):
 # Also track which threads have already received context information
 threads_with_context = set()
 
+# Store thread context versions for tracking changes
+thread_context_versions = {}
+
 # New function to extract and log token usage
 def log_token_usage(run_info, operation_name):
     """Extract and log token usage information from a run"""
@@ -879,6 +882,8 @@ def ask_question():
         question = data.get('question')
         roi_context = data.get('context', {})
         session_id = data.get('sessionId', str(uuid.uuid4()))
+        context_version = data.get('contextVersion', '')
+        is_new_session = data.get('isNewSession', False)
         
         if not question:
             return jsonify({"error": "Question is required"}), 400
@@ -935,15 +940,42 @@ def ask_question():
                     print(f"Error creating thread: {e}")
                     return jsonify({"error": f"Failed to create conversation thread: {str(e)}"}), 500
             
-            # Add ROI context as a message, but only if we haven't added it to this thread before
+            # Check if context version has changed
+            current_thread_version = thread_context_versions.get(thread_id)
+            context_changed = context_version and current_thread_version != context_version
+            
+            # Define context key for tracking
             context_key = f"{thread_id}_context"
-            if context_text and context_key not in threads_with_context:
+            
+            # If this is a new session, clear previous context tracking
+            if is_new_session:
+                if context_key in threads_with_context:
+                    threads_with_context.remove(context_key)
+                if thread_id in thread_context_versions:
+                    del thread_context_versions[thread_id]
+                context_changed = True
+                print(f"New session detected, clearing context tracking for thread {thread_id}")
+            
+            # Add or update ROI context as a message
+            if context_text and (context_key not in threads_with_context or context_changed):
                 try:
+                    # Prepare context update message
+                    context_message = f"Here is my current ROI calculation context that you should reference when answering my questions:\n\n{context_text}\n\n"
+                    
+                    # Add additional note if context was updated
+                    if context_changed:
+                        if is_new_session:
+                            context_message += "Note: This is a completely new ROI calculation. Disregard all previous context and conversations.\n\n"
+                        else:
+                            context_message += "Note: The ROI calculation data has been updated. Please use this new information for your answers and ignore previous context.\n\n"
+                    
+                    context_message += "Please acknowledge receipt of this context."
+                    
                     # Add context as user message
                     ai_project_client.agents.create_message(
                         thread_id=thread_id,
                         role="user",
-                        content=f"Here is my current ROI calculation context that you should reference when answering my questions:\n\n{context_text}\n\nPlease acknowledge receipt of this context."
+                        content=context_message
                     )
                     
                     # Process the context message
@@ -964,12 +996,17 @@ def ask_question():
                     # Add a small delay to ensure any pending operations are complete
                     time.sleep(2)
                     
-                    print(f"Added context to thread {thread_id}")
+                    # Update tracking
+                    if context_changed:
+                        print(f"Updated context for thread {thread_id} (version change: {current_thread_version} -> {context_version})")
+                    else:
+                        print(f"Added initial context to thread {thread_id}")
                     
-                    # Mark this thread as having received context
+                    # Mark this thread as having received context and update version
                     threads_with_context.add(context_key)
+                    thread_context_versions[thread_id] = context_version
                 except Exception as e:
-                    print(f"Error adding context to thread: {e}")
+                    print(f"Error adding/updating context to thread: {e}")
                     # Continue even if context addition fails
             
             # Add user question

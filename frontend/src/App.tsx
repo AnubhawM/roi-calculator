@@ -70,6 +70,26 @@ const App: React.FC = () => {
     roiResults: response
   };
 
+  // Generate a version hash for ROI context
+  const calculateContextVersion = (): string => {
+    // Create a string representation of the context data
+    const contextString = `${budget}|${employees}|${duration}|${customFields.map(field => 
+      `${field.title}:${field.value}`).join('|')}|${response ? response.substring(0, 100) : ''}`;
+    
+    // Generate a simple hash
+    let hash = 0;
+    for (let i = 0; i < contextString.length; i++) {
+      const char = contextString.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    
+    // Return as a string
+    return hash.toString();
+  };
+
+  const contextVersion = calculateContextVersion();
+
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const fileArray = Array.from(e.target.files);
@@ -477,7 +497,7 @@ const App: React.FC = () => {
   };
 
   return (
-    <MainLayout roiContext={roiContext}>
+    <MainLayout roiContext={{...roiContext, contextVersion}}>
       <div>
         <h1 className="text-2xl font-bold mb-6 text-center text-gray-800 dark:text-gray-100">ROI Calculator Dashboard</h1>
         <Card>

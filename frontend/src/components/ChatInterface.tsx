@@ -22,6 +22,7 @@ interface ChatInterfaceProps {
     duration: string;
     customFields: any[];
     roiResults?: string;
+    contextVersion?: string;
   };
 }
 
@@ -40,11 +41,48 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ roiContext }) => {
   const [serviceStatus, setServiceStatus] = useState<'available' | 'unavailable' | 'checking'>('checking');
   const [error, setError] = useState<string | null>(null);
   const [chatHeight, setChatHeight] = useState<number>(400);
+  const [currentContextVersion, setCurrentContextVersion] = useState<string>('');
+  const [isNewSession, setIsNewSession] = useState<boolean>(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Track context version changes
+  useEffect(() => {
+    if (roiContext?.contextVersion && roiContext.contextVersion !== currentContextVersion) {
+      // If this is the first context version, just set it
+      if (!currentContextVersion) {
+        setCurrentContextVersion(roiContext.contextVersion);
+        return;
+      }
+      
+      // Check if this is a drastic change (e.g., completely new ROI calculation)
+      // This could be a simple heuristic based on results existence
+      const isDrasticChange = 
+        // If we had results before but now they're gone (new calculation)
+        (roiContext.roiResults === "" && messages.length > 2) ||
+        // Or if the session has been going for a while (10+ messages)
+        (messages.length > 10);
+      
+      // For drastic changes, start a new session to avoid confusion
+      if (isDrasticChange) {
+        const newSessionId = `session_${Math.random().toString(36).substring(2, 15)}`;
+        setSessionId(newSessionId);
+        setIsNewSession(true);
+        setMessages([{
+          id: Date.now().toString(),
+          content: 'I notice you\'ve started a new ROI calculation. How can I help you with this new analysis?',
+          sender: 'assistant',
+          timestamp: new Date(),
+        }]);
+      }
+      
+      // Update the current context version
+      setCurrentContextVersion(roiContext.contextVersion);
+    }
+  }, [roiContext?.contextVersion, messages.length]);
 
   // Load saved height from localStorage on mount
   useEffect(() => {
@@ -62,9 +100,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ roiContext }) => {
       if (newHeight >= 250) {
         setChatHeight(newHeight);
         localStorage.setItem('roiAssistantHeight', newHeight.toString());
-        
-        // Scroll to the bottom after resizing
-        setTimeout(scrollToBottom, 100);
       }
     }
   };
@@ -97,11 +132,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ roiContext }) => {
     checkAgentHealth();
   }, [sessionId]);
 
-  // Auto-scroll to bottom when messages change
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-  
   const scrollToBottom = () => {
     if (messagesContainerRef.current) {
       messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
@@ -145,37 +175,179 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ roiContext }) => {
       .replace(/dark:[a-z-0-9]+ /g, '')
       
       // Ensure proper bullet point formatting with a space after dash
-      .replace(/^-([^\s])/gm, '- $1')
-      
-      // Fix LaTeX math expressions - ensure they have proper delimiters
-      // First handle specifically the ROI and Payback Period formulas
-      .replace(/\\text{ROI}.+?\\times\s*100/g, (match) => {
-        if (!match.startsWith('$')) {
-          return `$${match}$`;
-        }
+      .replace(/^-([^\s])/gm, '- $1');
+
+    // Special handling for LaTeX formulas containing \text{...}
+    // This ensures \text commands are properly wrapped in LaTeX delimiters
+    processedText = processedText.replace(/\$?\\text\{([^}]+)\}(.*?)(?:\$|$)/g, (match, textContent, remainder) => {
+      // If it's already properly wrapped in delimiters, leave it alone
+      if (match.startsWith('$') && match.endsWith('$')) {
         return match;
-      })
-      .replace(/\\text{Payback Period}.+?\\text{years}/g, (match) => {
-        if (!match.startsWith('$')) {
-          return `$${match}$`;
-        }
-        return match;
-      });
-    
-    // Detect lines that contain LaTeX math notation but aren't wrapped in delimiters
-    processedText = processedText.split('\n').map(line => {
-      if (
-        (line.includes('\\frac') || 
-         line.includes('\\text') || 
-         line.includes('\\times') || 
-         line.includes('\\approx')) && 
-        !line.includes('$')
-      ) {
-        return `$${line}$`;
       }
+      
+      // If this is part of a larger expression or formula
+      if (remainder && (remainder.includes('\\frac') || remainder.includes('=') || remainder.includes('\\times'))) {
+        return `$\\text{${textContent}}${remainder}$`;
+      }
+      
+      // Just wrap the \text command itself if it's standalone
+      return `$\\text{${textContent}}${remainder}$`;
+    });
+
+    // Properly handle common ROI and Payback Period formulas
+    // This ensures the complete formulas are properly delimited
+    processedText = processedText
+      .replace(/(\$?\\text\{ROI\}\s*=\s*\\frac\{[^}]+\}\{[^}]+\}\s*\\times\s*100\$?)/g, (match) => {
+        if (match.startsWith('$') && match.endsWith('$')) return match;
+        return `$$${match.replace(/^\$|\$$/, '')}$$`;
+      })
+      .replace(/(\$?\\text\{Payback Period\}\s*=\s*\\frac\{[^}]+\}\{[^}]+\}\$?)/g, (match) => {
+        if (match.startsWith('$') && match.endsWith('$')) return match;
+        return `$$${match.replace(/^\$|\$$/, '')}$$`;
+      });
+
+    // Handle complete formulas that might not be properly delimited
+    processedText = processedText.replace(/([^$])(\\frac\{[^}]+\}\{[^}]+\})([^$]|$)/g, '$1$$$$2$$$$3');
+
+    // *** STEP 1: PRE-PROCESS EXISTING LATEX DELIMITERS ***
+    // First, normalize all LaTeX delimiters to a single $ for easier processing
+    processedText = processedText
+      .replace(/\$\$/g, '$') // Convert double $$ to single $
+      .replace(/\$\$\$/g, '$'); // Convert triple $$$ to single $
+    
+    // *** STEP 2: IDENTIFY AND MARK LATEX EXPRESSIONS ***
+    // Common LaTeX commands to identify mathematical expressions
+    const latexCommands = [
+      '\\text', '\\frac', '\\times', '\\cdot', '\\div', '\\approx', 
+      '\\sqrt', '\\sum', '\\prod', '\\int', '\\lim', '\\log', 
+      '\\sin', '\\cos', '\\tan', '\\alpha', '\\beta', '\\gamma',
+      '\\delta', '\\theta', '\\sigma', '\\omega', '\\pi'
+    ];
+    
+    // Start with existing dollar-delimited expressions
+    const existingLatexBlocks: string[] = [];
+    processedText = processedText.replace(/\$(.*?)\$/g, (match, content) => {
+      // Only capture if it's not empty
+      if (content && content.trim()) {
+        existingLatexBlocks.push(content);
+        return `__LATEX_BLOCK_${existingLatexBlocks.length - 1}__`;
+      }
+      return match;
+    });
+    
+    // Handle free-standing LaTeX expressions (not already in delimiters)
+    // We'll process line by line to better manage context
+    processedText = processedText.split('\n').map(line => {
+      // Skip lines already marked
+      if (line.includes('__LATEX_BLOCK_')) {
+        return line;
+      }
+
+      // Check if the line has any LaTeX commands
+      const hasLatexCommand = latexCommands.some(cmd => line.includes(cmd));
+      
+      if (hasLatexCommand) {
+        // For lines with equations like "ROI = ..."
+        if (line.match(/(?:ROI|Payback Period)\s*=\s*\\/) || 
+            line.match(/\\text\{(?:ROI|Payback Period)\}\s*=\s*/)) {
+          existingLatexBlocks.push(line);
+          return `__LATEX_BLOCK_${existingLatexBlocks.length - 1}__`;
+        }
+        
+        // For lines with other LaTeX expressions
+        latexCommands.forEach(cmd => {
+          // Match expressions containing the command
+          if (line.includes(cmd)) {
+            const regex = new RegExp(`([^$])(${cmd}[^$]+)([^$]|$)`, 'g');
+            line = line.replace(regex, (match, prefix, expr, suffix) => {
+              existingLatexBlocks.push(expr);
+              return `${prefix}__LATEX_BLOCK_${existingLatexBlocks.length - 1}__${suffix}`;
+            });
+          }
+        });
+      }
+      
+      // Handle equation lines with multiplication and equals
+      if ((line.includes('×') || line.includes('=')) && /\d+\s*(?:×|\*)\s*\d+/.test(line)) {
+        // Extract complete equations containing × or multiplication
+        const equationRegex = /([\w\s]+)\s*=\s*([^=]+)/g;
+        line = line.replace(equationRegex, (match, leftSide, rightSide) => {
+          existingLatexBlocks.push(`${leftSide} = ${rightSide}`);
+          return `__LATEX_BLOCK_${existingLatexBlocks.length - 1}__`;
+        });
+      }
+      
       return line;
     }).join('\n');
+    
+    // *** STEP 3: FORMAT EQUATION BLOCKS WITH PROPER DELIMITERS ***
+    // Now format each captured LaTeX expression appropriately
+    existingLatexBlocks.forEach((block, index) => {
+      const placeholder = `__LATEX_BLOCK_${index}__`;
+      
+      // Check if this is an equation block (simple test: contains = sign)
+      const isEquation = block.includes('=');
+      
+      // Check if it's a more complex formula with LaTeX commands
+      const hasLatexCommand = latexCommands.some(cmd => block.includes(cmd));
+      
+      // Special handling for \text expressions - ensure they're always formatted correctly
+      const containsText = block.includes('\\text');
+      
+      if (isEquation || (hasLatexCommand && !containsText)) {
+        // For display math (centered equations), use double dollar signs
+        processedText = processedText.replace(placeholder, `$$${block}$$`);
+      } else if (containsText && block.includes('\\frac')) {
+        // For \text expressions containing fractions (likely ROI formulas)
+        processedText = processedText.replace(placeholder, `$$${block}$$`);
+      } else {
+        // For inline math, use single dollar signs
+        processedText = processedText.replace(placeholder, `$${block}$`);
+      }
+    });
 
+    // *** STEP 4: HANDLE SPECIAL CASES FOR COMMON ROI PATTERNS ***
+    // These patterns are common in ROI calculations but more generalized now
+    processedText = processedText
+      // Handle substitution lines
+      .replace(/(Substituting(?:\s+in(?:\s+our)?\s+values)?:?)\s*([^$]*)(\$\$[^$]+\$\$)/gi, 
+        (match, prefix, middle, formula) => `${prefix}\n\n${formula}`)
+      
+      // Handle calculation results
+      .replace(/(Calculating this gives:?)\s*([^$]*)(\$\$[^$]+\$\$)/gi, 
+        (match, prefix, middle, formula) => `${prefix}\n\n${formula}`)
+      
+      // Fix basic formula introductions
+      .replace(/(To calculate the ROI,[^:]*:?)\s*([^$]*)(\$\$[^$]+\$\$)/gi, 
+        (match, prefix, middle, formula) => `${prefix}\n\n${formula}`)
+      
+      // Fix ROI percentage headers followed immediately by formulas
+      .replace(/(Estimated ROI Percentage)\s*\n+-+\s*\n+\s*(\$\$[^$]+\$\$)/gi, 
+        (match, header, formula) => `${header}\n\n---\n\n${formula}`);
+    
+    // *** STEP 5: FINAL CLEANUP ***
+    // Ensure all \text{ROI} expressions are properly formatted
+    processedText = processedText
+      // Convert inline \text{ROI} to double dollar if part of an equation
+      .replace(/\$\\text\{(ROI|Payback Period)\}([^$]*=[\s\S]*?)\$/g, '$$\\text{$1}$2$$')
+      
+      // Properly format colored text in LaTeX
+      .replace(/\\color\{([^}]+)\}\{([^}]+)\}/g, '\\color{$1}{$2}')
+      
+      // Ensure proper spacing around display math
+      .replace(/(\$\$[^$]+\$\$)([^\s\n])/g, '$1\n\n$2')
+      .replace(/([^\s\n])(\$\$[^$]+\$\$)/g, '$1\n\n$2')
+      
+      // Fix any lines starting with formulas by ensuring space
+      .replace(/^(\$\$)/gm, '\n$1')
+      .replace(/(\$\$)$/gm, '$1\n')
+      
+      // Remove any backslash-escaped dollar signs in equations
+      .replace(/\\\$/g, '$')
+      
+      // Fix any double spaces
+      .replace(/\s{2,}/g, ' ');
+    
     return processedText;
   };
 
@@ -207,7 +379,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ roiContext }) => {
     if (serviceStatus === 'unavailable') {
       setTimeout(() => {
         const fallbackMessage: Message = {
-          id: Date.now().toString(),
+          id: (Date.now() + 1).toString(),
           content: 'I apologize, but the ROI Assistant service is currently unavailable. Please try again later or contact support if the issue persists.',
           sender: 'assistant',
           timestamp: new Date(),
@@ -225,9 +397,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ roiContext }) => {
         {
           question: userMessage.content,
           context: roiContext,
-          sessionId: sessionId
+          sessionId: sessionId,
+          contextVersion: roiContext?.contextVersion || '',
+          isNewSession: isNewSession
         }
       );
+      
+      // Reset the new session flag after the first message
+      if (isNewSession) {
+        setIsNewSession(false);
+      }
       
       // Handle successful response
       if (response.data && response.data.answer) {
@@ -259,10 +438,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ roiContext }) => {
       }
       
       const errorResponseMessage: Message = {
-        id: (Date.now() + 1).toString(),
+        id: (Date.now() + 2).toString(),
         content: errorMessage,
         sender: 'assistant',
-        timestamp: new Date(),
+        timestamp: new Date()
       };
       
       setMessages(prev => [...prev, errorResponseMessage]);
