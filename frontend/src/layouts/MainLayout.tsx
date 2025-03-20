@@ -12,6 +12,7 @@ interface MainLayoutProps {
     duration: string;
     customFields: any[];
     roiResults?: string;
+    contextVersion?: string;
   };
 }
 
