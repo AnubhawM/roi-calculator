@@ -579,7 +579,18 @@ If extracted document data is provided, use this information to:
 2. Reference specific data points from the documents to add credibility to your analysis
 3. Identify any discrepancies between the document data and the input parameters
 
-Present the ROI calculation using clear formatting. For numeric values, ensure proper currency formatting with commas for thousands. Format the ROI calculation formula clearly showing how the ROI percentage is derived.
+Format your response using proper Markdown:
+- Use ### for section headers (e.g., ### Executive Summary)
+- Use ** for emphasis on important points and numbers
+- Use - for bullet points
+- When writing mathematical formulas or equations, ALWAYS wrap them in LaTeX dollar signs for proper rendering:
+  - Inline math should use single dollar signs: $formula$
+  - Display math (for more complex formulas) should use double dollar signs: $$formula$$
+  - Example: $ROI = \\frac{{Total Benefits - Total Costs}}{{Total Costs}} \\times 100$
+  - For the ROI formula, use: $\\text{{ROI}} = \\frac{{\\text{{Total Benefits}} - \\text{{Total Costs}}}}{{\\text{{Total Costs}}}} \\times 100$
+  - For the Payback Period, use: $\\text{{Payback Period}} = \\frac{{\\text{{Total Costs}}}}{{\\text{{Annual Benefits}}}}$
+
+Present the ROI calculation using clear formatting. For numeric values, ensure proper currency formatting with commas for thousands.
         """
         
         try:
@@ -969,10 +980,26 @@ def ask_question():
                     content=question
                 )
                 
+                # Create system message with formatting instructions
+                system_instructions = """You are a change management specialist, assisting leaders with providing analysis and insights.
+
+When writing your responses, format mathematical formulas and equations properly using LaTeX syntax for optimal rendering:
+- Use dollar sign delimiters ($...$) for inline math
+- Use double dollar signs ($$...$$) for display math equations
+- For ROI formulas, use: $\\text{ROI} = \\frac{\\text{Total Benefits} - \\text{Total Costs}}{\\text{Total Costs}} \\times 100$
+- For Payback Period formulas, use: $\\text{Payback Period} = \\frac{\\text{Total Costs}}{\\text{Annual Benefits}}$
+
+Format your responses using proper Markdown:
+- Use ### for section headers
+- Use ** for emphasis on important points and numbers
+- Use - for bullet points
+"""
+                
                 # Process the user's question
                 run = ai_project_client.agents.create_and_process_run(
                     thread_id=thread_id, 
-                    agent_id=agent_id
+                    agent_id=agent_id,
+                    additional_instructions=system_instructions
                 )
                 
                 # Use improved waiting function
