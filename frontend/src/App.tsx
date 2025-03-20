@@ -235,55 +235,23 @@ const App: React.FC = () => {
     }
   };
 
-  // Function to clean the API response for display
+  // Function to prepare content for LaTeX rendering
   const prepareContent = (text: string): string => {
     if (!text) return '';
-
-    // Fix any common issues with formatting
-    let processedText = text
-      // Clean up any LaTeX-style formatting that might have been used
-      .replace(/\\{/g, '{')
-      .replace(/\\}/g, '}')
-      .replace(/\\\[/g, '')
-      .replace(/\\\]/g, '')
-      
-      // Remove any CSS class strings that might have been included
-      .replace(/text-[a-z-0-9]+ /g, '')
-      .replace(/m[tblr]-[0-9]+ /g, '')
-      .replace(/dark:[a-z-0-9]+ /g, '')
-      
-      // Ensure proper bullet point formatting with a space after dash
-      .replace(/^-([^\s])/gm, '- $1')
-      
-      // Fix LaTeX math expressions - ensure they have proper delimiters
-      // First handle specifically the ROI and Payback Period formulas
-      .replace(/\\text{ROI}.+?\\times\s*100/g, (match) => {
-        if (!match.startsWith('$')) {
-          return `$${match}$`;
-        }
-        return match;
-      })
-      .replace(/\\text{Payback Period}.+?\\text{years}/g, (match) => {
-        if (!match.startsWith('$')) {
-          return `$${match}$`;
-        }
-        return match;
-      });
     
-    // Detect lines that contain LaTeX math notation but aren't wrapped in delimiters
-    processedText = processedText.split('\n').map(line => {
-      if (
-        (line.includes('\\frac') || 
-         line.includes('\\text') || 
-         line.includes('\\times') || 
-         line.includes('\\approx')) && 
-        !line.includes('$')
-      ) {
-        return `$${line}$`;
-      }
-      return line;
-    }).join('\n');
-
+    // Ensure proper bullet point formatting with a space after dash
+    let processedText = text.replace(/^-([^\s])/gm, '- $1');
+    
+    // Handle currency notation to prevent it from being interpreted as LaTeX
+    // We need a different approach that won't show the backslashes
+    processedText = processedText.replace(/\$(\d[\d,]*(?:\.\d+)?)/g, (match) => {
+      // Use a temporary placeholder that KaTeX won't interpret as math
+      return '\\$' + match.substring(1);
+    });
+    
+    // Ensure proper line breaks in markdown
+    processedText = processedText.replace(/([^\n])\n([^\n])/g, '$1\n\n$2');
+    
     return processedText;
   };
 

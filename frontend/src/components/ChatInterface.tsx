@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, ReactNode } from 'react';
 import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
@@ -157,205 +157,31 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ roiContext }) => {
     }
   };
 
-  // Function to prepare content for markdown rendering - similar to App.tsx
-  const prepareContent = (text: string): string => {
-    if (!text) return '';
-
-    // Fix any common issues with formatting
-    let processedText = text
-      // Clean up any LaTeX-style formatting that might have been used
-      .replace(/\\{/g, '{')
-      .replace(/\\}/g, '}')
-      .replace(/\\\[/g, '')
-      .replace(/\\\]/g, '')
-      
-      // Remove any CSS class strings that might have been included
-      .replace(/text-[a-z-0-9]+ /g, '')
-      .replace(/m[tblr]-[0-9]+ /g, '')
-      .replace(/dark:[a-z-0-9]+ /g, '')
-      
-      // Ensure proper bullet point formatting with a space after dash
-      .replace(/^-([^\s])/gm, '- $1');
-
-    // Special handling for LaTeX formulas containing \text{...}
-    // This ensures \text commands are properly wrapped in LaTeX delimiters
-    processedText = processedText.replace(/\$?\\text\{([^}]+)\}(.*?)(?:\$|$)/g, (match, textContent, remainder) => {
-      // If it's already properly wrapped in delimiters, leave it alone
-      if (match.startsWith('$') && match.endsWith('$')) {
-        return match;
-      }
-      
-      // If this is part of a larger expression or formula
-      if (remainder && (remainder.includes('\\frac') || remainder.includes('=') || remainder.includes('\\times'))) {
-        return `$\\text{${textContent}}${remainder}$`;
-      }
-      
-      // Just wrap the \text command itself if it's standalone
-      return `$\\text{${textContent}}${remainder}$`;
-    });
-
-    // Properly handle common ROI and Payback Period formulas
-    // This ensures the complete formulas are properly delimited
-    processedText = processedText
-      .replace(/(\$?\\text\{ROI\}\s*=\s*\\frac\{[^}]+\}\{[^}]+\}\s*\\times\s*100\$?)/g, (match) => {
-        if (match.startsWith('$') && match.endsWith('$')) return match;
-        return `$$${match.replace(/^\$|\$$/, '')}$$`;
-      })
-      .replace(/(\$?\\text\{Payback Period\}\s*=\s*\\frac\{[^}]+\}\{[^}]+\}\$?)/g, (match) => {
-        if (match.startsWith('$') && match.endsWith('$')) return match;
-        return `$$${match.replace(/^\$|\$$/, '')}$$`;
-      });
-
-    // Handle complete formulas that might not be properly delimited
-    processedText = processedText.replace(/([^$])(\\frac\{[^}]+\}\{[^}]+\})([^$]|$)/g, '$1$$$$2$$$$3');
-
-    // *** STEP 1: PRE-PROCESS EXISTING LATEX DELIMITERS ***
-    // First, normalize all LaTeX delimiters to a single $ for easier processing
-    processedText = processedText
-      .replace(/\$\$/g, '$') // Convert double $$ to single $
-      .replace(/\$\$\$/g, '$'); // Convert triple $$$ to single $
-    
-    // *** STEP 2: IDENTIFY AND MARK LATEX EXPRESSIONS ***
-    // Common LaTeX commands to identify mathematical expressions
-    const latexCommands = [
-      '\\text', '\\frac', '\\times', '\\cdot', '\\div', '\\approx', 
-      '\\sqrt', '\\sum', '\\prod', '\\int', '\\lim', '\\log', 
-      '\\sin', '\\cos', '\\tan', '\\alpha', '\\beta', '\\gamma',
-      '\\delta', '\\theta', '\\sigma', '\\omega', '\\pi'
-    ];
-    
-    // Start with existing dollar-delimited expressions
-    const existingLatexBlocks: string[] = [];
-    processedText = processedText.replace(/\$(.*?)\$/g, (match, content) => {
-      // Only capture if it's not empty
-      if (content && content.trim()) {
-        existingLatexBlocks.push(content);
-        return `__LATEX_BLOCK_${existingLatexBlocks.length - 1}__`;
-      }
-      return match;
-    });
-    
-    // Handle free-standing LaTeX expressions (not already in delimiters)
-    // We'll process line by line to better manage context
-    processedText = processedText.split('\n').map(line => {
-      // Skip lines already marked
-      if (line.includes('__LATEX_BLOCK_')) {
-        return line;
-      }
-
-      // Check if the line has any LaTeX commands
-      const hasLatexCommand = latexCommands.some(cmd => line.includes(cmd));
-      
-      if (hasLatexCommand) {
-        // For lines with equations like "ROI = ..."
-        if (line.match(/(?:ROI|Payback Period)\s*=\s*\\/) || 
-            line.match(/\\text\{(?:ROI|Payback Period)\}\s*=\s*/)) {
-          existingLatexBlocks.push(line);
-          return `__LATEX_BLOCK_${existingLatexBlocks.length - 1}__`;
-        }
-        
-        // For lines with other LaTeX expressions
-        latexCommands.forEach(cmd => {
-          // Match expressions containing the command
-          if (line.includes(cmd)) {
-            const regex = new RegExp(`([^$])(${cmd}[^$]+)([^$]|$)`, 'g');
-            line = line.replace(regex, (match, prefix, expr, suffix) => {
-              existingLatexBlocks.push(expr);
-              return `${prefix}__LATEX_BLOCK_${existingLatexBlocks.length - 1}__${suffix}`;
-            });
-          }
-        });
-      }
-      
-      // Handle equation lines with multiplication and equals
-      if ((line.includes('×') || line.includes('=')) && /\d+\s*(?:×|\*)\s*\d+/.test(line)) {
-        // Extract complete equations containing × or multiplication
-        const equationRegex = /([\w\s]+)\s*=\s*([^=]+)/g;
-        line = line.replace(equationRegex, (match, leftSide, rightSide) => {
-          existingLatexBlocks.push(`${leftSide} = ${rightSide}`);
-          return `__LATEX_BLOCK_${existingLatexBlocks.length - 1}__`;
-        });
-      }
-      
-      return line;
-    }).join('\n');
-    
-    // *** STEP 3: FORMAT EQUATION BLOCKS WITH PROPER DELIMITERS ***
-    // Now format each captured LaTeX expression appropriately
-    existingLatexBlocks.forEach((block, index) => {
-      const placeholder = `__LATEX_BLOCK_${index}__`;
-      
-      // Check if this is an equation block (simple test: contains = sign)
-      const isEquation = block.includes('=');
-      
-      // Check if it's a more complex formula with LaTeX commands
-      const hasLatexCommand = latexCommands.some(cmd => block.includes(cmd));
-      
-      // Special handling for \text expressions - ensure they're always formatted correctly
-      const containsText = block.includes('\\text');
-      
-      if (isEquation || (hasLatexCommand && !containsText)) {
-        // For display math (centered equations), use double dollar signs
-        processedText = processedText.replace(placeholder, `$$${block}$$`);
-      } else if (containsText && block.includes('\\frac')) {
-        // For \text expressions containing fractions (likely ROI formulas)
-        processedText = processedText.replace(placeholder, `$$${block}$$`);
-      } else {
-        // For inline math, use single dollar signs
-        processedText = processedText.replace(placeholder, `$${block}$`);
-      }
-    });
-
-    // *** STEP 4: HANDLE SPECIAL CASES FOR COMMON ROI PATTERNS ***
-    // These patterns are common in ROI calculations but more generalized now
-    processedText = processedText
-      // Handle substitution lines
-      .replace(/(Substituting(?:\s+in(?:\s+our)?\s+values)?:?)\s*([^$]*)(\$\$[^$]+\$\$)/gi, 
-        (match, prefix, middle, formula) => `${prefix}\n\n${formula}`)
-      
-      // Handle calculation results
-      .replace(/(Calculating this gives:?)\s*([^$]*)(\$\$[^$]+\$\$)/gi, 
-        (match, prefix, middle, formula) => `${prefix}\n\n${formula}`)
-      
-      // Fix basic formula introductions
-      .replace(/(To calculate the ROI,[^:]*:?)\s*([^$]*)(\$\$[^$]+\$\$)/gi, 
-        (match, prefix, middle, formula) => `${prefix}\n\n${formula}`)
-      
-      // Fix ROI percentage headers followed immediately by formulas
-      .replace(/(Estimated ROI Percentage)\s*\n+-+\s*\n+\s*(\$\$[^$]+\$\$)/gi, 
-        (match, header, formula) => `${header}\n\n---\n\n${formula}`);
-    
-    // *** STEP 5: FINAL CLEANUP ***
-    // Ensure all \text{ROI} expressions are properly formatted
-    processedText = processedText
-      // Convert inline \text{ROI} to double dollar if part of an equation
-      .replace(/\$\\text\{(ROI|Payback Period)\}([^$]*=[\s\S]*?)\$/g, '$$\\text{$1}$2$$')
-      
-      // Properly format colored text in LaTeX
-      .replace(/\\color\{([^}]+)\}\{([^}]+)\}/g, '\\color{$1}{$2}')
-      
-      // Ensure proper spacing around display math
-      .replace(/(\$\$[^$]+\$\$)([^\s\n])/g, '$1\n\n$2')
-      .replace(/([^\s\n])(\$\$[^$]+\$\$)/g, '$1\n\n$2')
-      
-      // Fix any lines starting with formulas by ensuring space
-      .replace(/^(\$\$)/gm, '\n$1')
-      .replace(/(\$\$)$/gm, '$1\n')
-      
-      // Remove any backslash-escaped dollar signs in equations
-      .replace(/\\\$/g, '$')
-      
-      // Fix any double spaces
-      .replace(/\s{2,}/g, ' ');
-    
-    return processedText;
-  };
-
-  // Format currency values with commas
+  // Simple function to format currency values
   const formatCurrency = (text: string): string => {
     return text.replace(/\$(\d+)(?=\D)/g, (match, number) => {
       return '$' + Number(number).toLocaleString();
     });
+  };
+
+  // Simple content preparation function to ensure LaTeX is properly formatted
+  const prepareContent = (text: string): string => {
+    if (!text) return '';
+    
+    // Ensure proper bullet point formatting
+    let processedText = text.replace(/^-([^\s])/gm, '- $1');
+    
+    // Look for currency notation ($ followed by number) and protect it
+    // This prevents KaTeX from trying to interpret currency as math
+    processedText = processedText.replace(/\$(\d[\d,]*(?:\.\d+)?)/g, (match) => {
+      // Use a simpler approach to escape currency that won't display the backslash
+      return '\\$' + match.substring(1);
+    });
+    
+    // Ensure proper line breaks in markdown
+    processedText = processedText.replace(/([^\n])\n([^\n])/g, '$1\n\n$2');
+    
+    return processedText;
   };
 
   const sendMessage = async () => {
@@ -399,7 +225,17 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ roiContext }) => {
           context: roiContext,
           sessionId: sessionId,
           contextVersion: roiContext?.contextVersion || '',
-          isNewSession: isNewSession
+          isNewSession: isNewSession,
+          // Instructions for markdown and LaTeX formatting
+          systemInstructions: `Format your responses in markdown with proper line spacing between paragraphs.
+          For mathematical formulas, use standard LaTeX notation:
+          - For inline formulas, use: $your_formula$
+          - For display/block formulas, use: $$your_formula$$
+          - For ROI calculations, use: $$\\text{ROI} = \\frac{\\text{Total Benefits} - \\text{Total Costs}}{\\text{Total Costs}} \\times 100$$
+          - For currency values, use regular dollar signs (e.g., $1,000) without any backslashes.
+          
+          Be sure to include a blank line between paragraphs to ensure proper markdown rendering.
+          Be very mindful about using correct formatting. Don't return any special formatting like italics or bold. Just use standard markdown formatting.`
         }
       );
       
@@ -539,11 +375,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ roiContext }) => {
                   rehypePlugins={[rehypeKatex]}
                   components={{
                     // Customize heading styles for chat
-                    h3: ({node, ...props}) => <h3 className="text-base font-bold mt-2 mb-1 text-blue-600 dark:text-blue-400" {...props} />,
+                    h3: ({...props}) => <h3 className="text-base font-bold mt-2 mb-1 text-blue-600 dark:text-blue-400" {...props} />,
                     // Customize paragraph styles
-                    p: ({node, ...props}) => <p className="mb-2" {...props} />,
+                    p: ({...props}) => <p className="mb-2" {...props} />,
                     // Customize list styles
-                    li: ({node, ...props}) => <li className="ml-4" {...props} />
+                    li: ({...props}) => <li className="ml-4" {...props} />
                   }}
                 >
                   {formatCurrency(prepareContent(message.content))}

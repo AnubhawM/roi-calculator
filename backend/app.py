@@ -1020,11 +1020,21 @@ def ask_question():
                 # Create system message with formatting instructions
                 system_instructions = """You are a change management specialist, assisting leaders with providing analysis and insights.
 
-When writing your responses, format mathematical formulas and equations properly using LaTeX syntax for optimal rendering:
-- Use dollar sign delimiters ($...$) for inline math
-- Use double dollar signs ($$...$$) for display math equations
-- For ROI formulas, use: $\\text{ROI} = \\frac{\\text{Total Benefits} - \\text{Total Costs}}{\\text{Total Costs}} \\times 100$
-- For Payback Period formulas, use: $\\text{Payback Period} = \\frac{\\text{Total Costs}}{\\text{Annual Benefits}}$
+When writing your responses, you MUST format ALL mathematical formulas and equations using the EXACT LaTeX syntax shown below:
+
+For ANY formula containing \text commands or fractions:
+1. ALWAYS wrap the ENTIRE formula with double dollar signs ($$...$$)
+2. NEVER use single dollar signs for complex formulas
+3. Example: $$\\text{ROI} = \\frac{\\text{Total Benefits} - \\text{Total Costs}}{\\text{Total Costs}} \\times 100$$
+
+For simple inline math (variables or simple expressions):
+1. Use single dollar signs ($...$)
+2. Example: The value of $x$ is 5.
+
+For ROI and Payback formulas specifically:
+- ALWAYS format ROI as: $$\\text{ROI} = \\frac{\\text{Total Benefits} - \\text{Total Costs}}{\\text{Total Costs}} \\times 100$$
+- ALWAYS format Payback Period as: $$\\text{Payback Period} = \\frac{\\text{Total Costs}}{\\text{Annual Benefits}}$$
+- When substituting values, keep the same double dollar sign format: $$\\text{ROI} = \\frac{205,480 - 23,434}{23,434} \\times 100 \\approx 776.27\\%$$
 
 Format your responses using proper Markdown:
 - Use ### for section headers
