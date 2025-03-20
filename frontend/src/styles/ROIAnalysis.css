@@ -134,4 +134,28 @@
 /* Make sure math expressions don't overflow chat bubbles */
 .mr-auto > .roi-analysis {
   overflow-x: auto;
+}
+
+/* Resizable window styles */
+div[style*="resize: vertical"] {
+  position: relative;
+  min-height: 300px;
+}
+
+div[style*="resize: vertical"]::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 15px;
+  height: 15px;
+  cursor: ns-resize;
+  background: 
+    linear-gradient(135deg, transparent 10px, rgba(100, 120, 200, 0.3) 0) top left,
+    linear-gradient(-135deg, transparent 0px, rgba(100, 120, 200, 0.3) 0) top right,
+    linear-gradient(-45deg, transparent 0px, rgba(100, 120, 200, 0.3) 0) bottom right,
+    linear-gradient(45deg, transparent 0px, rgba(100, 120, 200, 0.3) 0) bottom left;
+  background-size: 50% 50%;
+  background-repeat: no-repeat;
+  pointer-events: none;
 } 

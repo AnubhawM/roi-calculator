@@ -39,10 +39,35 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ roiContext }) => {
   const [sessionId, setSessionId] = useState<string>('');
   const [serviceStatus, setServiceStatus] = useState<'available' | 'unavailable' | 'checking'>('checking');
   const [error, setError] = useState<string | null>(null);
+  const [chatHeight, setChatHeight] = useState<number>(400);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Load saved height from localStorage on mount
+  useEffect(() => {
+    const savedHeight = localStorage.getItem('roiAssistantHeight');
+    if (savedHeight) {
+      setChatHeight(parseInt(savedHeight));
+    }
+  }, []);
+
+  // Save height to localStorage when it changes
+  const handleResize = () => {
+    if (chatContainerRef.current) {
+      const newHeight = chatContainerRef.current.clientHeight;
+      // Only update if height is at least 250px (reasonable minimum)
+      if (newHeight >= 250) {
+        setChatHeight(newHeight);
+        localStorage.setItem('roiAssistantHeight', newHeight.toString());
+        
+        // Scroll to the bottom after resizing
+        setTimeout(scrollToBottom, 100);
+      }
+    }
+  };
 
   // Generate a session ID on first load
   useEffect(() => {
@@ -279,7 +304,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ roiContext }) => {
   };
 
   return (
-    <div className="flex flex-col h-full bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden" style={{ maxHeight: 'calc(100vh - 80px)' }}>
+    <div 
+      ref={chatContainerRef}
+      className="flex flex-col h-full bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden" 
+      style={{ 
+        maxHeight: 'calc(100vh - 80px)', 
+        height: `${chatHeight}px`,
+        resize: 'vertical',
+      }}
+      onMouseUp={handleResize}
+    >
       {/* Chat header */}
       <div className="px-4 py-3 bg-gray-100 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 text-gray-800 dark:text-white flex-shrink-0 rounded-t-lg">
         <div className="flex justify-between items-center">
@@ -293,17 +327,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ roiContext }) => {
             </button>
           )}
         </div>
-        <p className="text-xs text-gray-600 dark:text-gray-300">Ask questions about your ROI calculations</p>
+        <div className="flex justify-between items-center">
+          <p className="text-xs text-gray-600 dark:text-gray-300">Ask questions about your ROI calculations</p>
+        </div>
         {error && (
           <p className="text-xs text-red-500 mt-1">{error}</p>
         )}
       </div>
       
-      {/* Messages container with fixed height */}
-      <div 
+      {/* Messages container with flex height */}
+      <div
         ref={messagesContainerRef}
         className="flex-1 p-4 overflow-y-auto" 
-        style={{ height: '400px' }}
       >
         {messages.map((message) => (
           <div
