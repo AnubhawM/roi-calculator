@@ -1,4 +1,5 @@
 # ValueVision
+ValueVision is an AI-powered ROI calculator built with Azure services to uncover hidden, people-centric risks during organizational change.
 
 ## Running the Application Locally
 
@@ -41,3 +42,5 @@ If no web browser is available or the web browser fails to open, you may force d
 ## License
 
 [MIT](https://choosealicense.com/licenses/mit/)
+
+*This project was built following Microsoft’s Responsible AI principles; including fairness, transparency, and accountability*
