@@ -23,7 +23,7 @@ const Header: React.FC = () => {
               <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
             </svg>
             <div>
-              <h1 className="text-2xl font-bold text-white">ROI Calculator</h1>
+              <h1 className="text-2xl font-bold text-white">ValueVision</h1>
               <p className="text-xs text-blue-100">Change Management Analysis Tool</p>
             </div>
           </div>

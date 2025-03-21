@@ -591,6 +591,8 @@ Format your response using proper Markdown:
   - For the Payback Period, use: $\\text{{Payback Period}} = \\frac{{\\text{{Total Costs}}}}{{\\text{{Annual Benefits}}}}$
 
 Present the ROI calculation using clear formatting. For numeric values, ensure proper currency formatting with commas for thousands.
+
+Also, don't prioritize cutting headcount to save money, even if it's mathematically the best option.
         """
         
         try:
