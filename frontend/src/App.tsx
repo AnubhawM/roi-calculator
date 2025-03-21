@@ -600,7 +600,7 @@ const App: React.FC = () => {
             <div className="space-y-6">
               <div>
                 <label htmlFor="budget" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Project Budget ($)
+                  Change Management Budget ($)
                 </label>
                 <input
                   type="number"
@@ -664,7 +664,7 @@ const App: React.FC = () => {
                 
                 <p className="text-sm text-gray-600 dark:text-gray-400 italic">
                   Add custom fields to include additional factors in your ROI calculation. 
-                  Examples: Hourly Rate, Training Costs, Expected Efficiency Gain (%).
+                  Examples: Hourly Rate, Training Costs, Reduction in productivity without change management (%).
                 </p>
                 
                 {customFields.map((field) => (
